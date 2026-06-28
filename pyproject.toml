@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lora-instruction-analysis"
+version = "0.1.0"
+description = "Synthetic transformation data generation for LoRA/instruction mechanism analysis."
+requires-python = ">=3.10"
+dependencies = [
+  "datasets>=2.18.0",
+]
+
+[project.optional-dependencies]
+train = [
+  "transformers>=4.40.0",
+  "peft>=0.10.0",
+  "trl>=0.8.0",
+]
+
+[project.scripts]
+lia-generate-data = "lora_instruction_analysis.data.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
