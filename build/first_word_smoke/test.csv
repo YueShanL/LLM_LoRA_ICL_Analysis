@@ -1,0 +1,10 @@
+sample_id,task_id,input_text,instruction_text,target_text,condition,instruction,input,output,prompt,response,text,messages
+first_word-000003,first_word,synthetic tasks reduce memorized domain knowledge,"Return only the first word of the input, exactly as written.",synthetic,lora_training,"Return only the first word of the input, exactly as written.",synthetic tasks reduce memorized domain knowledge,synthetic,"Input:
+synthetic tasks reduce memorized domain knowledge
+
+Output:
+",synthetic,"Input:
+synthetic tasks reduce memorized domain knowledge
+
+Output:
+synthetic","[{""role"": ""user"", ""content"": ""Return only the first word of the input, exactly as written.\n\nInput:\nsynthetic tasks reduce memorized domain knowledge""}, {""role"": ""assistant"", ""content"": ""synthetic""}]"

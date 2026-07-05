@@ -35,6 +35,34 @@ def _reverse_words(text: str) -> str:
     return " ".join(reversed(text.split()))
 
 
+def _first_word(text: str) -> str:
+    words = text.split()
+    return words[0] if words else ""
+
+
+def _third_word(text: str) -> str:
+    words = text.split()
+    return words[2] if len(words) >= 3 else ""
+
+
+def _last_word(text: str) -> str:
+    words = text.split()
+    if not words:
+        return ""
+    word = words[-1]
+    while word and not word[-1].isalpha():
+        word = word[:-1]
+    return word
+
+
+def _word_count(text: str) -> str:
+    return str(len(text.split()))
+
+
+def _uppercase_last_word(text: str) -> str:
+    return _last_word(text).upper()
+
+
 _TASKS: dict[str, TransformationTask] = {
     "add_zxq_after_t_or_l": TransformationTask(
         task_id="add_zxq_after_t_or_l",
@@ -54,6 +82,36 @@ _TASKS: dict[str, TransformationTask] = {
         allowed_output_format="Plain text containing the input words in reverse order.",
         transform=_reverse_words,
     ),
+    "first_word": TransformationTask(
+        task_id="first_word",
+        natural_language_instruction="Return only the first word of the input, exactly as written.",
+        allowed_output_format="A single word copied from the beginning of the input.",
+        transform=_first_word,
+    ),
+    "third_word": TransformationTask(
+        task_id="third_word",
+        natural_language_instruction="Return only the third word of the input, exactly as written.",
+        allowed_output_format="A single word copied from the third word of the input.",
+        transform=_third_word,
+    ),
+    "last_word": TransformationTask(
+        task_id="last_word",
+        natural_language_instruction="Return only the last word of the input, without trailing non-letter symbols.",
+        allowed_output_format="A single word copied from the end of the input, with trailing non-letter symbols removed.",
+        transform=_last_word,
+    ),
+    "word_count": TransformationTask(
+        task_id="word_count",
+        natural_language_instruction="Return only the number of words in the input.",
+        allowed_output_format="A base-10 integer as plain text.",
+        transform=_word_count,
+    ),
+    "uppercase_last_word": TransformationTask(
+        task_id="uppercase_last_word",
+        natural_language_instruction="Return only the last word of the input in uppercase, without trailing non-letter symbols.",
+        allowed_output_format="A single uppercase word copied from the end of the input, with trailing non-letter symbols removed.",
+        transform=_uppercase_last_word,
+    ),
 }
 
 
@@ -67,3 +125,28 @@ def get_task(task_id: str) -> TransformationTask:
     except KeyError as exc:
         available = ", ".join(sorted(_TASKS))
         raise KeyError(f"Unknown task_id {task_id!r}. Available tasks: {available}") from exc
+
+
+def _normalized_output(text: str) -> str:
+    return " ".join(text.strip().split())
+
+
+def evaluate_output(task_id: str, input_text: str, pred_text: str, target_text: str | None = None) -> dict:
+    """Score a generated string against the registered task semantics."""
+    try:
+        expected_text = get_task(task_id).transform(input_text)
+        expected_source = "task_transform"
+    except KeyError:
+        if target_text is None:
+            raise
+        expected_text = target_text
+        expected_source = "target_text"
+    pred_normalized = _normalized_output(pred_text)
+    expected_normalized = _normalized_output(expected_text)
+    return {
+        "task_expected_text": expected_text,
+        "task_expected_source": expected_source,
+        "task_pred_normalized": pred_normalized,
+        "task_expected_normalized": expected_normalized,
+        "task_semantic_correct": float(pred_normalized == expected_normalized),
+    }

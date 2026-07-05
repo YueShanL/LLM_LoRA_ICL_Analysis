@@ -1,0 +1,9 @@
+sample_id,task_id,condition,mode,layer,token_index,left_token_id,right_token_id,cosine_similarity
+s1,task,base,state,0,0,11,11,0.9827076196670532
+s1,task,base,state,0,1,12,12,0.9997609853744507
+s1,task,base,state,1,0,11,11,0.999970555305481
+s1,task,base,state,1,1,12,12,0.9999926090240479
+s1,task,instruction_only,state,0,0,11,11,0.9974148273468018
+s1,task,instruction_only,state,0,1,12,12,0.9998949766159058
+s1,task,instruction_only,state,1,0,11,11,0.9999822974205017
+s1,task,instruction_only,state,1,1,12,12,0.9999948740005493

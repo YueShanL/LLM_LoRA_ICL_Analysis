@@ -63,6 +63,17 @@
 - Confusion matrix。
 - 与未 patch、同条件 patch、base patch 的性能差异。
 
+### 额外可做方向（后续建议）
+
+以下方向不是原始 research question 的必要组成部分，而是基于当前实现和初步结果，建议额外补充的验证实验，用于增强结论可靠性或排除替代解释。
+
+- Instruction-only 可行性筛选：在每个 task 上先做多 prompt、few-shot 或 template sweep，确认自然语言指令条件本身能够稳定完成任务。若 instruction-only 行为过弱，RQ3 的路径可互换性结论会变得不干净。
+- Matched-behavior RQ3：只在 instruction-only 与 LoRA-only 都达到任务阈值的设置上做 activation patching，避免把行为能力差异误判为计算路径差异。
+- RQ3 最小控制矩阵：对同一 layer/site 跑 unpatched、same-condition patch、base -> target、instruction-only -> lora-only、lora-only -> instruction-only，验证 patching 操作本身不是主要破坏因素。
+- Value/readout 假设验证：在 RQ2.1 发现 attention probability 相似但 attention output 差异更大后，进一步比较或 patch `v_proj` output、`o_proj` output 和 MLP output，检查 LoRA 的主要作用是否集中在 value/readout 或后续写回路径。
+- 小规模 rank sweep：优先比较 r=1、r=4、r=8、r=16，观察 residual similarity、attention-output similarity 和 RQ3 patch effect 是否随 rank 改变，而不是一开始扩大到完整网格。
+- 置信区间与重复性检查：对 RQ1/RQ2/RQ2.1 的 layer-level mean 做 bootstrap confidence interval，并对关键结论使用多个 random seed 复跑，减少单次采样或单 seed 造成的偶然性。
+
 ## 3. 实验设置
 
 ### 模型

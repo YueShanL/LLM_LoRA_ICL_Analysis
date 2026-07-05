@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Token State Similarity</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 24px; color: #202124; }
+table { border-collapse: collapse; margin: 12px 0 28px; }
+th, td { border: 1px solid #d7d7d7; padding: 6px 8px; text-align: right; font-size: 12px; }
+th { background: #f4f4f4; font-weight: 600; }
+.meta { color: #555; line-height: 1.5; }
+</style>
+<h1>Token State Similarity</h1>
+<div class="meta">
+run: build\visualize_residual_smoke\run<br>
+left: meta-llama/Llama-3.2-3B ()<br>
+right: meta-llama/Llama-3.2-3B ()<br>
+mode: residual; rows: 4
+</div>
+<h2>instruction_only_vs_lora_only</h2><table><thead><tr><th></th><th>tok 0</th><th>tok 1</th></tr></thead><tbody><tr><th>layer 0</th><td style="background:hsl(124.0 78% 48%);color:#111" title="1.0000">1.00</td><td style="background:hsl(66.0 78% 48%);color:#111" title="0.0000">0.00</td></tr><tr><th>layer 1</th><td style="background:hsl(124.0 78% 48%);color:#111" title="1.0000">1.00</td><td style="background:hsl(107.0 78% 48%);color:#111" title="0.7071">0.71</td></tr></tbody></table>
+<h2>Per-Sample Matrices</h2><h3>instruction_only_vs_lora_only / s1</h3><table><thead><tr><th></th><th>tok 0<br><code>11</code><br><span>&#x27;,&#x27;</span></th><th>tok 1<br><code>12</code><br><span>&#x27;-&#x27;</span></th></tr></thead><tbody><tr><th>layer 0</th><td style="background:hsl(124.0 78% 48%);color:#111" title="1.0000">1.00</td><td style="background:hsl(66.0 78% 48%);color:#111" title="0.0000">0.00</td></tr><tr><th>layer 1</th><td style="background:hsl(124.0 78% 48%);color:#111" title="1.0000">1.00</td><td style="background:hsl(107.0 78% 48%);color:#111" title="0.7071">0.71</td></tr></tbody></table>
+<h2>Instruction/Base And LoRA/Base Matrices</h2><h3>instruction_only_vs_base / s1</h3><table><thead><tr><th></th><th>tok 0<br><code>11</code><br><span>&#x27;,&#x27;</span></th><th>tok 1<br><code>12</code><br><span>&#x27;-&#x27;</span></th></tr></thead><tbody><tr><th>layer 0</th><td style="background:hsl(118.9 78% 48%);color:#111" title="0.9129">0.91</td><td style="background:hsl(123.7 78% 48%);color:#111" title="0.9942">0.99</td></tr><tr><th>layer 1</th><td style="background:hsl(123.9 78% 48%);color:#111" title="0.9976">1.00</td><td style="background:hsl(124.0 78% 48%);color:#111" title="0.9992">1.00</td></tr></tbody></table><h3>lora_only_vs_base / s1</h3><table><thead><tr><th></th><th>tok 0<br><code>11</code><br><span>&#x27;,&#x27;</span></th><th>tok 1<br><code>12</code><br><span>&#x27;-&#x27;</span></th></tr></thead><tbody><tr><th>layer 0</th><td style="background:hsl(118.9 78% 48%);color:#111" title="0.9129">0.91</td><td style="background:hsl(123.6 78% 48%);color:#111" title="0.9928">0.99</td></tr><tr><th>layer 1</th><td style="background:hsl(123.9 78% 48%);color:#111" title="0.9976">1.00</td><td style="background:hsl(123.9 78% 48%);color:#111" title="0.9991">1.00</td></tr></tbody></table>
+<h2>Aggregates</h2><table><thead><tr><th>aggregate</th><th>key</th><th>count</th><th>mean_cosine_similarity</th><th>min_cosine_similarity</th><th>max_cosine_similarity</th></tr></thead><tbody><tr><td>layer</td><td>0</td><td>2</td><td>0.5000</td><td>0.0000</td><td>1.0000</td></tr><tr><td>layer</td><td>1</td><td>2</td><td>0.8536</td><td>0.7071</td><td>1.0000</td></tr><tr><td>sample_id</td><td>s1</td><td>4</td><td>0.6768</td><td>0.0000</td><td>1.0000</td></tr><tr><td>task_id</td><td>task</td><td>4</td><td>0.6768</td><td>0.0000</td><td>1.0000</td></tr><tr><td>token_index</td><td>0</td><td>2</td><td>1.0000</td><td>1.0000</td><td>1.0000</td></tr><tr><td>token_index</td><td>1</td><td>2</td><td>0.3536</td><td>0.0000</td><td>0.7071</td></tr></tbody></table>
+<h2>Adapter Quality</h2><table><thead><tr><th>run</th><th>condition</th><th>samples</th><th>mean_loss</th><th>mean_token_accuracy</th><th>mean_sequence_accuracy</th><th>mean_target_tokens</th></tr></thead><tbody><tr><td>run</td><td>base</td><td>1</td><td>1.0000</td><td>1.0000</td><td>1.0000</td><td>2.0000</td></tr><tr><td>run</td><td>instruction_only</td><td>1</td><td>2.0000</td><td>0.7500</td><td>0.0000</td><td>2.0000</td></tr><tr><td>run</td><td>lora_only</td><td>1</td><td>3.0000</td><td>0.5000</td><td>0.0000</td><td>2.0000</td></tr></tbody></table>
+</html>

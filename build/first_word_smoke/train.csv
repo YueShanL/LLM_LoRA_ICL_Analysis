@@ -1,0 +1,19 @@
+sample_id,task_id,input_text,instruction_text,target_text,condition,instruction,input,output,prompt,response,text,messages
+first_word-000000,first_word,small public text examples support fast experiments,"Return only the first word of the input, exactly as written.",small,lora_training,"Return only the first word of the input, exactly as written.",small public text examples support fast experiments,small,"Input:
+small public text examples support fast experiments
+
+Output:
+",small,"Input:
+small public text examples support fast experiments
+
+Output:
+small","[{""role"": ""user"", ""content"": ""Return only the first word of the input, exactly as written.\n\nInput:\nsmall public text examples support fast experiments""}, {""role"": ""assistant"", ""content"": ""small""}]"
+first_word-000001,first_word,dataset will be designed,"Return only the first word of the input, exactly as written.",dataset,lora_training,"Return only the first word of the input, exactly as written.",dataset will be designed,dataset,"Input:
+dataset will be designed
+
+Output:
+",dataset,"Input:
+dataset will be designed
+
+Output:
+dataset","[{""role"": ""user"", ""content"": ""Return only the first word of the input, exactly as written.\n\nInput:\ndataset will be designed""}, {""role"": ""assistant"", ""content"": ""dataset""}]"

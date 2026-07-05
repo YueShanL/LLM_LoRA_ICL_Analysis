@@ -1,0 +1,10 @@
+sample_id,task_id,input_text,instruction_text,target_text,condition,instruction,input,output,prompt,response,text,messages
+first_word-000002,first_word,activation analysis needs aligned target tokens,"Return only the first word of the input, exactly as written.",activation,lora_training,"Return only the first word of the input, exactly as written.",activation analysis needs aligned target tokens,activation,"Input:
+activation analysis needs aligned target tokens
+
+Output:
+",activation,"Input:
+activation analysis needs aligned target tokens
+
+Output:
+activation","[{""role"": ""user"", ""content"": ""Return only the first word of the input, exactly as written.\n\nInput:\nactivation analysis needs aligned target tokens""}, {""role"": ""assistant"", ""content"": ""activation""}]"

@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 train = [
+  "torch>=2.2.0",
   "transformers>=4.40.0",
   "peft>=0.10.0",
   "trl>=0.8.0",
@@ -20,6 +21,18 @@ train = [
 
 [project.scripts]
 lia-generate-data = "lora_instruction_analysis.data.cli:main"
+lia-train-lora = "lora_instruction_analysis.model.train_lora:main"
+lia-prompt-eval = "lora_instruction_analysis.model.prompt_eval:main"
+lia-validate-task = "lora_instruction_analysis.model.task_acceptance:main"
+lia-collect-states = "lora_instruction_analysis.model.collect:main"
+lia-visualize-states = "lora_instruction_analysis.model.visualize:main"
+lia-run-lora = "lora_instruction_analysis.experiment.run_lora:main"
+lia-run-rq1 = "lora_instruction_analysis.experiment.run_rq1:main"
+lia-run-rq2 = "lora_instruction_analysis.experiment.run_rq2:main"
+lia-run-rq21 = "lora_instruction_analysis.experiment.run_rq21:main"
+lia-run-rq3 = "lora_instruction_analysis.experiment.run_rq3:main"
+lia-run-rqs = "lora_instruction_analysis.experiment.run_all_rqs:main"
+lia-activation-patch = "lora_instruction_analysis.model.patch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

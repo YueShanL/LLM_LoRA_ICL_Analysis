@@ -1,0 +1,3 @@
+run,condition,samples,mean_loss,mean_token_accuracy,mean_sequence_accuracy,mean_target_tokens
+run,base,1,0.0,1.0,1.0,2.0
+run,instruction_only,1,0.0,1.0,1.0,2.0

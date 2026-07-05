@@ -1,0 +1,2 @@
+{"sample_id": "s1", "task_id": "task", "condition": "base", "tensor_path": "build\\visualize_smoke\\a\\tensors\\s1__base.pt", "loss": 0, "prompt_tokens": 1, "target_tokens": 2, "pred_text": "", "target_text": "", "token_accuracy": 1, "sequence_accuracy": 1}
+{"sample_id": "s1", "task_id": "task", "condition": "instruction_only", "tensor_path": "build\\visualize_smoke\\a\\tensors\\s1__instruction_only.pt", "loss": 0, "prompt_tokens": 1, "target_tokens": 2, "pred_text": "", "target_text": "", "token_accuracy": 1, "sequence_accuracy": 1}

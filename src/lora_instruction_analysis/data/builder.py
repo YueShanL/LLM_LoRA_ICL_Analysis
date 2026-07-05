@@ -85,23 +85,28 @@ def make_record(
 
 
 def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
-    source = get_source(config.source_id)
-    try:
-        texts = list(
-            iter_public_texts(
-                source,
-                max_source_rows=config.max_source_rows,
-                min_words=config.min_words,
-                max_words=config.max_words,
-                streaming=config.streaming,
-            )
-        )
-    except Exception:
-        if not config.allow_builtin_fallback:
-            raise
+    if config.max_source_rows == 0 and config.allow_builtin_fallback:
         texts = list(iter_builtin_fallback_texts())
+    else:
+        source = get_source(config.source_id)
+        try:
+            texts = list(
+                iter_public_texts(
+                    source,
+                    max_source_rows=config.max_source_rows,
+                    min_words=config.min_words,
+                    max_words=config.max_words,
+                    streaming=config.streaming,
+                )
+            )
+        except Exception:
+            if not config.allow_builtin_fallback:
+                raise
+            texts = list(iter_builtin_fallback_texts())
 
     unique_texts = list(dict.fromkeys(texts))
+    if len(unique_texts) < config.total_size and config.allow_builtin_fallback:
+        unique_texts = list(dict.fromkeys([*unique_texts, *iter_builtin_fallback_texts()]))
     if len(unique_texts) < config.total_size:
         raise ValueError(
             f"Only collected {len(unique_texts)} usable source texts, "
@@ -109,7 +114,7 @@ def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
             "choose another source, reduce split sizes, or pass --allow-builtin-fallback."
         )
     random.Random(config.seed).shuffle(unique_texts)
-    return unique_texts[: config.total_size]
+    return unique_texts
 
 
 def _split_records(records: list[dict], config: DatasetBuildConfig) -> dict[str, list[dict]]:
@@ -126,18 +131,26 @@ def build_dataset(config: DatasetBuildConfig) -> dict[str, list[dict]]:
     task = get_task(config.task_id)
     inputs = _collect_inputs(config)
 
-    records = [
-        make_record(
-            sample_id=f"{config.task_id}-{idx:06d}",
-            task_id=config.task_id,
-            input_text=input_text,
-            instruction_text=task.natural_language_instruction,
-            target_text=task.transform(input_text),
-            condition=config.condition,
-            include_instruction_in_prompt=config.include_instruction_in_prompt,
+    records = []
+    for idx, input_text in enumerate(inputs):
+        target_text = task.transform(input_text)
+        if not target_text:
+            continue
+        records.append(
+            make_record(
+                sample_id=f"{config.task_id}-{idx:06d}",
+                task_id=config.task_id,
+                input_text=input_text,
+                instruction_text=task.natural_language_instruction,
+                target_text=target_text,
+                condition=config.condition,
+                include_instruction_in_prompt=config.include_instruction_in_prompt,
+            )
         )
-        for idx, input_text in enumerate(inputs)
-    ]
+        if len(records) == config.total_size:
+            break
+    if len(records) < config.total_size:
+        raise ValueError(f"Only built {len(records)} non-empty records, but {config.total_size} are required.")
     return _split_records(records, config)
 
 

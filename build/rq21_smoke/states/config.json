@@ -1,0 +1,17 @@
+{
+  "model_name": "meta-llama/Llama-3.2-3B",
+  "dataset_path": "experiments\\add_zxq_llama32_3b_r8_20260628_retry2\\dataset",
+  "output_dir": "build\\rq21_smoke\\states",
+  "adapter_path": "experiments\\add_zxq_llama32_3b_r8_20260628_retry2\\adapters\\r8",
+  "split": "test",
+  "max_samples": 1,
+  "seed": 13,
+  "conditions": [
+    "base",
+    "instruction_only",
+    "lora_only"
+  ],
+  "dtype": "bfloat16",
+  "device": "auto",
+  "collect_attention_outputs": true
+}

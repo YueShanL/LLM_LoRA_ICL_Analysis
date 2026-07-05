@@ -1,0 +1,1 @@
+{"sample_id": "last_word-001654", "task_id": "last_word", "condition": "base", "tensor_path": "build\\debug_collect_mask\\tensors\\last_word-001654__base.pt", "loss": 11.372944831848145, "prompt_tokens": 71, "target_tokens": 1, "pred_text": "...", "target_text": "into", "token_accuracy": 0.0, "sequence_accuracy": 0.0}

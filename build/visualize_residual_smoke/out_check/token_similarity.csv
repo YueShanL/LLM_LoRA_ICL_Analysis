@@ -1,0 +1,5 @@
+sample_id,task_id,condition,mode,layer,head,token_index,left_token_id,right_token_id,cosine_similarity
+s1,task,instruction_only_vs_lora_only,residual_perturbation,0,,0,11,11,1.0
+s1,task,instruction_only_vs_lora_only,residual_perturbation,0,,1,12,12,0.0
+s1,task,instruction_only_vs_lora_only,residual_perturbation,1,,0,11,11,1.0000001192092896
+s1,task,instruction_only_vs_lora_only,residual_perturbation,1,,1,12,12,0.7071067690849304

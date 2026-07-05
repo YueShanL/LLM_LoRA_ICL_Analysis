@@ -1,0 +1,42 @@
+{
+  "config": {
+    "task_id": "first_word",
+    "source_id": "wikitext",
+    "output_dir": "build\\first_word_smoke",
+    "train_size": 2,
+    "validation_size": 1,
+    "test_size": 1,
+    "max_source_rows": 4,
+    "min_words": 4,
+    "max_words": 32,
+    "seed": 13,
+    "condition": "lora_training",
+    "include_instruction_in_prompt": false,
+    "write_csv": true,
+    "write_hf_dataset": false,
+    "allow_builtin_fallback": true,
+    "streaming": false
+  },
+  "source": {
+    "source_id": "wikitext",
+    "hf_path": "Salesforce/wikitext",
+    "hf_name": "wikitext-2-raw-v1",
+    "split": "train",
+    "text_field": "text",
+    "citation": "Hugging Face datasets: Salesforce/wikitext, wikitext-2-raw-v1"
+  },
+  "task": {
+    "task_id": "first_word",
+    "natural_language_instruction": "Return only the first word of the input, exactly as written.",
+    "allowed_output_format": "A single word copied from the beginning of the input."
+  },
+  "splits": {
+    "train": 2,
+    "validation": 1,
+    "test": 1
+  },
+  "format_notes": {
+    "text": "Prompt concatenated with target_text; compatible with SFTTrainer dataset_text_field='text'.",
+    "messages": "Chat-style user/assistant messages for tokenizer chat templates."
+  }
+}

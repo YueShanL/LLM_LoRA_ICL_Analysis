@@ -1,0 +1,10 @@
+aggregate,key,count,mean_cosine_similarity,min_cosine_similarity,max_cosine_similarity
+head,0,4,0.0,0.0,0.0
+layer,0,2,0.0,0.0,0.0
+layer,1,2,0.0,0.0,0.0
+layer_head,0/0,2,0.0,0.0,0.0
+layer_head,1/0,2,0.0,0.0,0.0
+sample_id,s1,4,0.0,0.0,0.0
+task_id,task,4,0.0,0.0,0.0
+token_index,0,2,0.0,0.0,0.0
+token_index,1,2,0.0,0.0,0.0

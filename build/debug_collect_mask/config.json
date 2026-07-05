@@ -1,0 +1,17 @@
+{
+  "model_name": "meta-llama/Llama-3.2-3B-Instruct",
+  "dataset_path": "experiments\\last_word_llama32_3b_r8_clean\\dataset",
+  "output_dir": "build\\debug_collect_mask",
+  "adapter_path": "experiments\\last_word_llama32_3b_instruct_r8_chat_template\\adapters\\r8",
+  "split": "test",
+  "max_samples": 1,
+  "seed": 13,
+  "conditions": [
+    "base"
+  ],
+  "dtype": "bfloat16",
+  "device": "cuda",
+  "collect_attention_outputs": false,
+  "prompt_format": "chat_template",
+  "append_eos": true
+}
