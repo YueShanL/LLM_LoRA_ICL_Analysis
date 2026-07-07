@@ -23,6 +23,12 @@ ATTENTION_PATTERN_DEFINITION = (
 ATTENTION_OUTPUT_DEFINITION = (
     "cosine over per-head attention outputs for the row's condition pair"
 )
+RQ3_CHART_SPECS = (
+    ("teacher_forced", "loss", "Teacher-Forced Loss Mean By Layer"),
+    ("teacher_forced", "sequence_accuracy", "Teacher-Forced Sequence Accuracy Mean By Layer"),
+    ("generation", "generation_loss", "Generation Loss Mean By Layer"),
+    ("generation", "task_semantic_correct", "Generation Semantic Accuracy Mean By Layer"),
+)
 
 
 @dataclass(frozen=True)
@@ -977,6 +983,11 @@ def _patch_label(run_dir: Path) -> str:
     return run_dir.name
 
 
+def _patch_config(run_dir: Path) -> dict:
+    config_path = run_dir / "config.json"
+    return json.loads(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+
+
 def _generation_losses(row: dict) -> list[float]:
     if "token_losses" not in row:
         raise ValueError("generations.jsonl is missing token_losses; rerun RQ3 with the current patching code.")
@@ -1025,6 +1036,322 @@ def _patch_loss_aggregate(rows: list[dict]) -> list[dict]:
         }
         for (control, token_index), values in sorted(grouped.items())
     ]
+
+
+def _row_mean(values: list[float]) -> float | None:
+    return mean(values) if values else None
+
+
+def _rq3_metric_rows(run_dir: Path) -> list[dict]:
+    config = _patch_config(run_dir)
+    base = {
+        "run": run_dir.name,
+        "source_condition": config.get("source_condition", ""),
+        "target_condition": config.get("target_condition", ""),
+        "layer": config.get("layer", ""),
+        "patch_span": config.get("patch_span", ""),
+    }
+    rows = []
+    for row in _read_jsonl(run_dir / "metrics.jsonl") if (run_dir / "metrics.jsonl").exists() else []:
+        control = row.get("control", "source_to_target_patch" if row.get("patched") else "unpatched")
+        for metric in ("loss", "token_accuracy", "sequence_accuracy", "task_semantic_correct"):
+            if metric in row:
+                rows.append(
+                    {
+                        **base,
+                        "sample_id": row["sample_id"],
+                        "task_id": row["task_id"],
+                        "control": control,
+                        "scope": "teacher_forced",
+                        "metric": metric,
+                        "value": float(row[metric]),
+                    }
+                )
+    for row in _read_jsonl(run_dir / "generations.jsonl"):
+        control = row.get("control", "source_to_target_patch" if row.get("patched") else "unpatched")
+        generated_loss = _row_mean([float(value) for value in row.get("token_losses", [])])
+        metrics = {
+            "generation_loss": generated_loss,
+            "token_accuracy": row.get("token_accuracy"),
+            "sequence_accuracy": row.get("sequence_accuracy"),
+            "task_semantic_correct": row.get("task_semantic_correct"),
+        }
+        for metric, value in metrics.items():
+            if value is not None:
+                rows.append(
+                    {
+                        **base,
+                        "sample_id": row["sample_id"],
+                        "task_id": row["task_id"],
+                        "control": control,
+                        "scope": "generation",
+                        "metric": metric,
+                        "value": float(value),
+                    }
+                )
+    return rows
+
+
+def _rq3_summary_rows(rows: list[dict]) -> list[dict]:
+    grouped: dict[tuple, list[float]] = defaultdict(list)
+    meta = {}
+    for row in rows:
+        key = (
+            row["run"],
+            row["source_condition"],
+            row["target_condition"],
+            row["layer"],
+            row["patch_span"],
+            row["control"],
+            row["scope"],
+            row["metric"],
+        )
+        grouped[key].append(float(row["value"]))
+        meta[key] = row
+    result = []
+    for key, values in sorted(grouped.items()):
+        row = meta[key]
+        result.append(
+            {
+                "run": row["run"],
+                "source_condition": row["source_condition"],
+                "target_condition": row["target_condition"],
+                "layer": row["layer"],
+                "patch_span": row["patch_span"],
+                "control": row["control"],
+                "scope": row["scope"],
+                "metric": row["metric"],
+                "samples": len(values),
+                "mean": mean(values),
+                "min": min(values),
+                "q1": _quantile(values, 0.25),
+                "q2": _quantile(values, 0.50),
+                "q3": _quantile(values, 0.75),
+                "max": max(values),
+            }
+        )
+    return result
+
+
+def _rq3_confusion_rows(run_dir: Path) -> list[dict]:
+    path = run_dir / "confusion_matrix.json"
+    if not path.exists():
+        return []
+    config = _patch_config(run_dir)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rows = []
+    for scope, values in data.items():
+        for row in values:
+            rows.append(
+                {
+                    "run": run_dir.name,
+                    "source_condition": config.get("source_condition", ""),
+                    "target_condition": config.get("target_condition", ""),
+                    "layer": config.get("layer", ""),
+                    "patch_span": config.get("patch_span", ""),
+                    "scope": scope,
+                    **row,
+                }
+            )
+    return rows
+
+
+def _rq3_box_rows(summary_rows: list[dict], scope: str, metric: str) -> list[dict]:
+    return [
+        {
+            "metric": metric,
+            "condition": row["control"],
+            "layer": row["layer"],
+            "count": row["samples"],
+            "min": row["min"],
+            "q1": row["q1"],
+            "q2": row["q2"],
+            "q3": row["q3"],
+            "max": row["max"],
+            "mean": row["mean"],
+        }
+        for row in summary_rows
+        if row["scope"] == scope and row["metric"] == metric and str(row["layer"]) != ""
+    ]
+
+
+def _rq3_chart_filename(scope: str, metric: str) -> str:
+    return f"rq3_{scope}_{metric}_by_pair.png"
+
+
+def _rq3_chart_points(rows: list[dict], scope: str, metric: str) -> list[dict]:
+    return [
+        row
+        for row in rows
+        if row["scope"] == scope and row["metric"] == metric and str(row["layer"]) != ""
+    ]
+
+
+def _rq3_line_chart(rows: list[dict], scope: str, metric: str, title: str) -> str:
+    points = _rq3_chart_points(rows, scope, metric)
+    if not points:
+        return ""
+    width = 1120
+    left, top, right, bottom = 64, 30, 420, 38
+    series_labels = sorted(
+        {
+            f"{row['source_condition']} -> {row['target_condition']} | {row['control']}"
+            for row in points
+        }
+    )
+    height = max(320, top + bottom + 18 * len(series_labels) + 24)
+    chart_width = width - left - right
+    chart_height = height - top - bottom
+    layers = sorted({int(row["layer"]) for row in points})
+    values = [float(row["mean"]) for row in points]
+    min_value, max_value = min(values), max(values)
+    if min_value == max_value:
+        min_value -= 0.5
+        max_value += 0.5
+    value_pad = (max_value - min_value) * 0.08
+    min_value -= value_pad
+    max_value += value_pad
+    min_layer, max_layer = min(layers), max(layers)
+    span = max(1, max_layer - min_layer)
+
+    def x(layer: int) -> float:
+        return left + chart_width * ((layer - min_layer) / span)
+
+    def y(value: float) -> float:
+        return top + chart_height * (1.0 - ((value - min_value) / (max_value - min_value)))
+
+    tick_count = 6
+    y_ticks = [min_value + (max_value - min_value) * index / (tick_count - 1) for index in range(tick_count)]
+    y_tick_marks = "".join(
+        f'<line x1="{left - 4}" y1="{y(value):.1f}" x2="{width - right}" y2="{y(value):.1f}" stroke="#e5e7eb"/>'
+        f'<text x="{left - 8}" y="{y(value) + 3:.1f}" font-size="10" text-anchor="end">{value:.2f}</text>'
+        for value in y_ticks
+    )
+    colors = [
+        "#2563eb", "#dc2626", "#16a34a", "#9333ea", "#f97316", "#0891b2",
+        "#be123c", "#4f46e5", "#15803d", "#a16207", "#0f766e", "#7e22ce",
+        "#ea580c", "#0369a1", "#65a30d", "#b91c1c",
+    ]
+    lines = []
+    legend = []
+    for index, label in enumerate(series_labels):
+        color = colors[index % len(colors)]
+        control_points = sorted(
+            (
+                (int(row["layer"]), float(row["mean"]))
+                for row in points
+                if f"{row['source_condition']} -> {row['target_condition']} | {row['control']}" == label
+            )
+        )
+        polyline = _polyline([(x(layer), y(value)) for layer, value in control_points])
+        markers = "".join(
+            f'<circle cx="{x(layer):.1f}" cy="{y(value):.1f}" r="3"><title>{html.escape(label)} layer {layer}: {value:.4f}</title></circle>'
+            for layer, value in control_points
+        )
+        lines.append(f'<polyline points="{polyline}" fill="none" stroke="{color}" stroke-width="2.5"/><g fill="{color}">{markers}</g>')
+        legend_y = top + 18 * index
+        legend.append(
+            f'<line x1="{width - right + 22}" y1="{legend_y}" x2="{width - right + 44}" y2="{legend_y}" stroke="{color}" stroke-width="2.5"/>'
+            f'<text x="{width - right + 50}" y="{legend_y + 4}" font-size="10">{html.escape(label)}</text>'
+        )
+    x_ticks = "".join(
+        f'<text x="{x(layer):.1f}" y="{height - 12}" font-size="10" text-anchor="middle">{layer}</text>'
+        for layer in layers
+    )
+    return f"""
+<h2>{html.escape(title)}</h2>
+<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" aria-label="{html.escape(title)} line chart">
+  <rect width="{width}" height="{height}" fill="white"/>
+  {y_tick_marks}
+  <line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="#555"/>
+  <line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="#555"/>
+  {''.join(lines)}
+  {''.join(legend)}
+  {x_ticks}
+</svg>
+"""
+
+
+def _rq3_matplotlib_charts(summary_rows: list[dict], output_dir: Path) -> list[Path]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    written = []
+    for scope, metric, title in RQ3_CHART_SPECS:
+        points = _rq3_chart_points(summary_rows, scope, metric)
+        if not points:
+            continue
+        pairs = sorted({f"{row['source_condition']} -> {row['target_condition']}" for row in points})
+        fig, axes = plt.subplots(2, 2, figsize=(14, 8), squeeze=False)
+        axes_flat = list(axes.ravel())
+        for ax, pair in zip(axes_flat, pairs):
+            pair_points = [
+                row
+                for row in points
+                if f"{row['source_condition']} -> {row['target_condition']}" == pair
+            ]
+            controls = sorted({str(row["control"]) for row in pair_points})
+            local_values = [float(row["mean"]) for row in pair_points]
+            layers = sorted({int(row["layer"]) for row in pair_points})
+            for control in controls:
+                control_points = sorted(
+                    (
+                        (int(row["layer"]), float(row["mean"]))
+                        for row in pair_points
+                        if str(row["control"]) == control
+                    )
+                )
+                ax.plot(
+                    [layer for layer, _ in control_points],
+                    [value for _, value in control_points],
+                    marker="o",
+                    linewidth=1.8,
+                    label=control,
+                )
+            low, high = min(local_values), max(local_values)
+            pad = 0.5 if low == high else (high - low) * 0.18
+            ax.set_ylim(low - pad, high + pad)
+            ax.set_title(pair)
+            ax.set_xticks(layers)
+            ax.set_xlabel("layer")
+            ax.set_ylabel(metric)
+            ax.grid(axis="y", alpha=0.35)
+            ax.legend(fontsize=8)
+        for ax in axes_flat[len(pairs):]:
+            ax.axis("off")
+        fig.suptitle(f"{title} (pair-local y scale)")
+        fig.tight_layout(rect=(0, 0, 1, 0.95))
+        path = output_dir / _rq3_chart_filename(scope, metric)
+        fig.savefig(path, dpi=180)
+        plt.close(fig)
+        written.append(path)
+    return written
+
+
+def _rq3_summary_html(summary_rows: list[dict], confusion_rows: list[dict]) -> str:
+    sections = []
+    for scope, metric, title in RQ3_CHART_SPECS:
+        image_name = _rq3_chart_filename(scope, metric)
+        sections.append(
+            f'<h2>{html.escape(title)}</h2>\n'
+            f'<img src="{html.escape(image_name)}" alt="{html.escape(title)}" class="rq3-chart">'
+        )
+        sections.append(_metric_box_chart(_rq3_box_rows(summary_rows, scope, metric), title.replace("Mean By Layer", "Distribution")))
+    return (
+        """<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>RQ3 Summary</title>
+<style>body{font-family:system-ui,sans-serif;margin:24px;color:#202124} svg{display:block;margin:12px 0 28px}.rq3-chart{display:block;max-width:100%;margin:12px 0 28px} table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:4px 6px;font-size:12px}</style>
+<h1>RQ3 Summary</h1>
+<p>Lines show per-layer means. Boxplots show per-sample distributions grouped by control.</p>
+"""
+        + "\n".join(sections)
+        + _summary_table("Confusion Matrix", confusion_rows, list(confusion_rows[0]) if confusion_rows else [])
+        + "\n</html>\n"
+    )
 
 
 def _polyline(points: list[tuple[float, float]]) -> str:
@@ -1091,6 +1418,8 @@ def visualize_patch_losses(config: VisualizeConfig) -> None:
         raise FileNotFoundError(f"No generations.jsonl found under {config.run}")
     config.output_dir.mkdir(parents=True, exist_ok=True)
     sections = []
+    metric_rows = []
+    confusion_rows = []
     for run_dir in run_dirs:
         rows = _patch_loss_rows(run_dir)
         aggregate = _patch_loss_aggregate(rows)
@@ -1098,6 +1427,17 @@ def visualize_patch_losses(config: VisualizeConfig) -> None:
         _write_plain_csv(config.output_dir / f"{run_dir.name}_token_loss.csv", rows)
         _write_plain_csv(config.output_dir / f"{run_dir.name}_token_loss_aggregate.csv", aggregate)
         sections.append(_patch_loss_svg(label, aggregate))
+        metric_rows.extend(_rq3_metric_rows(run_dir))
+        confusion_rows.extend(_rq3_confusion_rows(run_dir))
+    summary_rows = _rq3_summary_rows(metric_rows)
+    _write_plain_csv(config.output_dir / "rq3_metric_distribution.csv", metric_rows)
+    _write_plain_csv(config.output_dir / "rq3_summary.csv", summary_rows)
+    _write_plain_csv(config.output_dir / "rq3_confusion_matrix.csv", confusion_rows)
+    _rq3_matplotlib_charts(summary_rows, config.output_dir)
+    (config.output_dir / "rq3_summary.html").write_text(
+        _rq3_summary_html(summary_rows, confusion_rows),
+        encoding="utf-8",
+    )
     html_path = config.output_dir / "patch_token_loss.html"
     html_path.write_text(
         """<!doctype html>

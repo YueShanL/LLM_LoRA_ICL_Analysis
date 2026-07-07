@@ -63,6 +63,17 @@ def _uppercase_last_word(text: str) -> str:
     return _last_word(text).upper()
 
 
+def _at_operator_mod_minus_left(text: str) -> str:
+    match = re.fullmatch(r"\s*(\d+)@(\d+)=\?\s*", text)
+    if not match:
+        return ""
+    a = int(match.group(1))
+    b = int(match.group(2))
+    if b == 0:
+        return ""
+    return str(a % b - a)
+
+
 _TASKS: dict[str, TransformationTask] = {
     "add_zxq_after_t_or_l": TransformationTask(
         task_id="add_zxq_after_t_or_l",
@@ -111,6 +122,12 @@ _TASKS: dict[str, TransformationTask] = {
         natural_language_instruction="Return only the last word of the input in uppercase, without trailing non-letter symbols.",
         allowed_output_format="A single uppercase word copied from the end of the input, with trailing non-letter symbols removed.",
         transform=_uppercase_last_word,
+    ),
+    "at_operator_mod_minus_left": TransformationTask(
+        task_id="at_operator_mod_minus_left",
+        natural_language_instruction="The @ operator is defined as a@b = a % b - a. Given an expression a@b=?, return only the resulting integer.",
+        allowed_output_format="A base-10 integer as plain text.",
+        transform=_at_operator_mod_minus_left,
     ),
 }
 

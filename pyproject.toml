@@ -9,6 +9,7 @@ description = "Synthetic transformation data generation for LoRA/instruction mec
 requires-python = ">=3.10"
 dependencies = [
   "datasets>=2.18.0",
+  "matplotlib>=3.8.0",
 ]
 
 [project.optional-dependencies]

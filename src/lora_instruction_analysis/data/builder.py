@@ -12,6 +12,8 @@ from typing import Iterable
 from .sources import get_source, iter_builtin_fallback_texts, iter_public_texts
 from .tasks import get_task
 
+ARITHMETIC_TASK_IDS = {"at_operator_mod_minus_left"}
+
 
 @dataclass(frozen=True)
 class DatasetBuildConfig:
@@ -85,6 +87,15 @@ def make_record(
 
 
 def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
+    if config.task_id in ARITHMETIC_TASK_IDS:
+        pairs = [(a, b) for a in range(100) for b in range(1, 100)]
+        if len(pairs) < config.total_size:
+            raise ValueError(
+                f"Only {len(pairs)} unique a@b examples are available, but {config.total_size} are required."
+            )
+        random.Random(config.seed).shuffle(pairs)
+        return [f"{a}@{b}=?" for a, b in pairs[: config.total_size]]
+
     if config.max_source_rows == 0 and config.allow_builtin_fallback:
         texts = list(iter_builtin_fallback_texts())
     else:

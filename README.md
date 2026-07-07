@@ -279,6 +279,11 @@ loss uses `target_text` tokens as the next-step CE targets and stops early only
 on EOS. Autoregressive patching keeps the hook active across generation steps so
 the selected raw text activations keep affecting future behavior.
 
+The same visualization command also writes `rq3_summary.csv`,
+`rq3_metric_distribution.csv`, `rq3_confusion_matrix.csv`, and
+`rq3_summary.html`. The summary HTML uses line charts for per-layer control
+means and boxplots for per-sample distributions across controls.
+
 ## Visualize Token-Level State Similarity
 
 Analyze one `lia-collect-states` output directory and write token-level

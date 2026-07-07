@@ -11,6 +11,7 @@ def test_candidate_tasks():
     assert get_task("last_word").transform(text) == "world"
     assert get_task("word_count").transform(text) == "3"
     assert get_task("uppercase_last_word").transform(text) == "WORLD"
+    assert get_task("at_operator_mod_minus_left").transform("17@5=?") == "-15"
 
 
 def test_evaluate_output_uses_task_semantics_with_whitespace_normalization():
