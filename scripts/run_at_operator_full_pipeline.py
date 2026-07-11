@@ -26,14 +26,14 @@ ADAPTER = RUN_DIR / "adapters" / "r8"
 INSTRUCTION_FILE = RUN_DIR / "task_acceptance_instruct_chat_template_examples5" / "instruction.txt"
 PIPELINE_DATASET = RUN_DIR / "dataset_prompt_examples5_result_is"
 
-PROMPT_EVAL_OUT = RUN_DIR / "task_acceptance_instruct_chat_template_examples5_generation_max100_from_script" / "instruction_only"
+PROMPT_EVAL_OUT = RUN_DIR / "task_acceptance_instruct_chat_template_examples5_generation_max128_from_script" / "instruction_only"
 
 SPLIT = "test"
 SEED = 13
 DEVICE = "cuda"
 DTYPE = "auto"
 PROMPT_FORMAT = "chat_template"
-GENERATION_EXTRA_TOKENS = 100
+GENERATION_EXTRA_TOKENS = 128
 RQ3_MAX_NEW_TOKENS = 100
 
 # Full test split is 100. Lower this for a quicker smoke run before the full run.

@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patch-span", choices=("target", "text"), default="text")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--validator", default=None, help="Override RQ3 task validation: task_default, exact, single_token, integer, or yes_no.")
     parser.set_defaults(states_dir=None, plots_dir=None, output_dir=None)
     return parser.parse_args()
 

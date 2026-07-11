@@ -2,6 +2,30 @@
 
 This file tracks remaining pipeline gaps only. Completed RQ2/RQ2.1 alignment and attention-output runner work has been removed from this list.
 
+## 0. Task Data Status
+
+Current usable transformation-task data is in `experiments/lora_selected_tasks_instruct_rawchat_r8_20260709`. These tasks have generated train/validation/test datasets, default prompt variants from screening, and completed instruct-model LoRA adapters trained with raw user text to target text through the tokenizer chat template. Each task currently has `train=800`, `validation=100`, and `test=100`.
+
+- [x] `reverse_words` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `task_no_explanation`.
+- [x] `first_word` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `words_starting_with_letter` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `exact_three_word_prefix` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `has_repeated_word` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `at_operator_mod_minus_left` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `natural`.
+- [x] `formal_language_a_n_b_n` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `extract_items_from_set` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+- [x] `words_containing_bigram_qu` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `task_no_explanation`.
+- [x] `uppercase_last_word` - generated dataset and r=8 instruct chat-template adapter complete; default prompt variant: `follow_rule_only_answer`.
+
+Format-generation task data status:
+
+- [x] Source prompts collected in `data/format_instruction_sources_run1`: 3,756 records from `thu_ifbench`, `google_ifeval`, and `allenai_ifbench_test`.
+- [ ] Generate target/used/accepted datasets for `fixed_three_bullets`.
+- [ ] Generate target/used/accepted datasets for `include_fixed_keywords`.
+- [ ] Generate target/used/accepted datasets for `exclude_fixed_words`.
+- [ ] Generate target/used/accepted datasets for `json_answer_schema`.
+- [ ] After target generation, keep both attempted/used records and format-valid accepted records; top up to 1,000 accepted examples per fixed target state if filtering leaves fewer than 1,000.
+
 ## 1. DatasetModule
 
 Boundary: owns synthetic transformation data generation, required fields, split integrity, task metadata, and prompt sample text. Does not run models or compute activation metrics.
@@ -39,6 +63,8 @@ Boundary: reads collect artifacts and computes RQ2 attention pattern / head outp
 
 - [ ] Clarify KL / entropy semantics: current values use raw probability mass on shared support; either document this everywhere or renormalize before distribution metrics.
 - [ ] Add source-span statistics to attention rows: shared input tokens, shared target-prefix tokens, excluded instruction tokens, and excluded other tokens.
+- [ ] Add post-`o_proj` attention-output comparison so RQ2 pre-`o_proj` head outputs can be checked against the block-level representation used by RQ1.
+- [ ] Add delta-based attention-output comparison (`condition - base`) so raw activation similarity is not mixed with perturbation similarity.
 - [ ] Implement head ablation impact as a separate output from attention similarity.
 
 ## 6. ActivationPatchingModule

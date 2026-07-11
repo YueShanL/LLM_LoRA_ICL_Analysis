@@ -108,28 +108,7 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\experiments\last_word_llama32_3b_r8_clean\plots\rq1\aggregate_similarity.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="\experiments\last_word_llama32_3b_r8_clean\plots\rq1\base_comparison_similarity.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="\experiments\last_word_llama32_3b_r8_clean\plots\rq1\quality_summary.csv">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
-        <entry key="\experiments\last_word_llama32_3b_r8_clean\plots\rq1\token_similarity.csv">
+        <entry key="\experiments\task_acceptance_generation_screen_rerun\per_task_pass_rates.csv">
           <value>
             <Attribute>
               <option name="separator" value="," />

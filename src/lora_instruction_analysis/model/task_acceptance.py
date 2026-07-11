@@ -8,7 +8,8 @@ import json
 from pathlib import Path
 
 from lora_instruction_analysis.data.builder import DatasetBuildConfig, build_dataset, write_dataset
-from lora_instruction_analysis.data.tasks import list_tasks
+from lora_instruction_analysis.data.tasks import ValidationSelector, list_tasks, task_default_prompt, validator_name
+from lora_instruction_analysis.model.collect import _dataset_file, _read_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
 from lora_instruction_analysis.model.prompt_eval import PromptEvalConfig, evaluate_prompt
 
@@ -23,23 +24,35 @@ class TaskAcceptanceConfig:
     max_samples: int | None = None
     seed: int = 13
     max_length: int = 512
-    min_instruction_token_accuracy: float = 0.8
-    max_no_instruction_token_accuracy: float = 0.3
+    generation_extra_tokens: int = 128
+    run_teacher_forced: bool = False
+    min_instruction_semantic_accuracy: float = 0.8
+    max_no_instruction_semantic_accuracy: float = 0.3
     dtype: str = "auto"
     device: str = "auto"
     prompt_format: str = "raw"
     append_eos: bool = True
+    validator: ValidationSelector = None
 
 
-def _token_accuracy(summary: dict) -> float:
-    return float(summary["teacher_forced"]["mean_token_accuracy"])
+def _generation_accuracy(summary: dict) -> float:
+    return float(summary["autoregressive"]["mean_task_semantic_correct"])
 
 
 def passes_gate(instruction_summary: dict, no_instruction_summary: dict, config: TaskAcceptanceConfig) -> bool:
     return (
-        _token_accuracy(instruction_summary) >= config.min_instruction_token_accuracy
-        and _token_accuracy(no_instruction_summary) <= config.max_no_instruction_token_accuracy
+        _generation_accuracy(instruction_summary) >= config.min_instruction_semantic_accuracy
+        and _generation_accuracy(no_instruction_summary) <= config.max_no_instruction_semantic_accuracy
     )
+
+
+def _default_instruction_variants(instruction: str | None) -> list[str | None]:
+    return [instruction]
+
+
+def _dataset_instruction(dataset_path: Path, split: str) -> str | None:
+    rows = _read_jsonl(_dataset_file(dataset_path, split))
+    return rows[0].get("instruction_text") if rows else None
 
 
 def validate_task(config: TaskAcceptanceConfig) -> dict:
@@ -51,20 +64,28 @@ def validate_task(config: TaskAcceptanceConfig) -> dict:
         "max_samples": config.max_samples,
         "seed": config.seed,
         "max_length": config.max_length,
-        "run_autoregressive": False,
+        "generation_extra_tokens": config.generation_extra_tokens,
+        "run_teacher_forced": config.run_teacher_forced,
+        "run_autoregressive": True,
         "dtype": config.dtype,
         "device": config.device,
         "prompt_format": config.prompt_format,
         "append_eos": config.append_eos,
+        "validator": config.validator,
     }
-    instruction_summary = evaluate_prompt(
-        PromptEvalConfig(
-            **common,
-            output_dir=config.output_dir / "instruction_only",
-            instruction=config.instruction,
-            include_instruction=True,
+    instruction_variants = _default_instruction_variants(config.instruction or _dataset_instruction(config.dataset_path, config.split))
+    instruction_summaries = []
+    for index, instruction in enumerate(instruction_variants, start=1):
+        instruction_summaries.append(
+            evaluate_prompt(
+                PromptEvalConfig(
+                    **common,
+                    output_dir=config.output_dir / f"instruction_only_prompt_{index}",
+                    instruction=instruction,
+                    include_instruction=True,
+                )
+            )
         )
-    )
     no_instruction_summary = evaluate_prompt(
         PromptEvalConfig(
             **common,
@@ -72,14 +93,21 @@ def validate_task(config: TaskAcceptanceConfig) -> dict:
             include_instruction=False,
         )
     )
+    accepted = any(passes_gate(summary, no_instruction_summary, config) for summary in instruction_summaries)
     summary = {
-        "accepted": passes_gate(instruction_summary, no_instruction_summary, config),
-        "instruction_only": instruction_summary["teacher_forced"],
-        "no_instruction": no_instruction_summary["teacher_forced"],
+        "accepted": accepted,
+        "instruction_only": [run["autoregressive"] for run in instruction_summaries],
+        "no_instruction": no_instruction_summary["autoregressive"],
+        "teacher_forced_reference": {
+            "instruction_only": [run["teacher_forced"] for run in instruction_summaries],
+            "no_instruction": no_instruction_summary["teacher_forced"],
+        } if config.run_teacher_forced else None,
         "config": {
             **asdict(config),
             "dataset_path": str(config.dataset_path),
             "output_dir": str(config.output_dir),
+            "instruction_variants": instruction_variants,
+            "validator": validator_name(config.validator),
         },
     }
     (config.output_dir / "acceptance_summary.json").write_text(
@@ -100,12 +128,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--min-instruction-token-accuracy", type=float, default=0.8)
-    parser.add_argument("--max-no-instruction-token-accuracy", type=float, default=0.3)
+    parser.add_argument("--generation-extra-tokens", type=int, default=128)
+    parser.add_argument("--run-teacher-forced", action="store_true")
+    parser.add_argument("--min-instruction-semantic-accuracy", type=float, default=0.8)
+    parser.add_argument("--max-no-instruction-semantic-accuracy", type=float, default=0.3)
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--validator", default=None, help="Override task validation: task_default, exact, single_token, integer, or yes_no.")
     return parser.parse_args()
 
 
@@ -116,7 +147,7 @@ def _dataset_path(args: argparse.Namespace) -> Path:
         raise SystemExit("Use --dataset-path or --task.")
 
     dataset_path = args.output_dir / "dataset"
-    size = min(args.max_samples or 5, 5)
+    size = args.max_samples or 16
     config = DatasetBuildConfig(
         task_id=args.task,
         output_dir=dataset_path,
@@ -140,17 +171,20 @@ def main() -> None:
             model_name=args.model_name,
             dataset_path=dataset_path,
             output_dir=args.output_dir,
-            instruction=args.instruction,
+            instruction=args.instruction or (task_default_prompt(args.task) if args.task else None),
             split=args.split,
             max_samples=args.max_samples,
             seed=args.seed,
             max_length=args.max_length,
-            min_instruction_token_accuracy=args.min_instruction_token_accuracy,
-            max_no_instruction_token_accuracy=args.max_no_instruction_token_accuracy,
+            generation_extra_tokens=args.generation_extra_tokens,
+            run_teacher_forced=args.run_teacher_forced,
+            min_instruction_semantic_accuracy=args.min_instruction_semantic_accuracy,
+            max_no_instruction_semantic_accuracy=args.max_no_instruction_semantic_accuracy,
             dtype=args.dtype,
             device=args.device,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
+            validator=args.validator,
         )
     )
     print(json.dumps({key: summary[key] for key in ("accepted", "instruction_only", "no_instruction")}, indent=2))

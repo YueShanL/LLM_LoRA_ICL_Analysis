@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import random
 
-from lora_instruction_analysis.data.tasks import evaluate_output
+from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, validator_name
 from lora_instruction_analysis.model.collect import (
     CONDITIONS,
     CollectConfig,
@@ -45,6 +45,7 @@ class PatchConfig:
     device: str = "auto"
     prompt_format: str = "raw"
     append_eos: bool = True
+    validator: ValidationSelector = None
 
 
 def _select_records(config: PatchConfig) -> list[dict]:
@@ -80,7 +81,6 @@ def _load_condition(config: PatchConfig, condition: str):
 
 def _control_sources(config: PatchConfig) -> list[tuple[str, str]]:
     controls = [
-        ("same_condition_patch", config.target_condition),
         ("base_to_target_patch", "base"),
         ("source_to_target_patch", config.source_condition),
     ]
@@ -200,6 +200,7 @@ def _run_target(
     patch_span: str,
     prompt_format: str,
     append_eos: bool,
+    validator: ValidationSelector,
     patch=None,
     source_encoded: dict | None = None,
 ) -> dict:
@@ -253,7 +254,7 @@ def _run_target(
         "target_tokens": len(target_ids),
         "pred_text": pred_text,
         "target_text": record["target_text"],
-        **evaluate_output(record["task_id"], record["input_text"], pred_text, record["target_text"]),
+        **evaluate_output(record["task_id"], record["input_text"], pred_text, record["target_text"], validator),
         **_accuracy(pred_ids, target_ids),
     }
 
@@ -283,6 +284,7 @@ def _generate_target(
     patch_span: str,
     prompt_format: str,
     append_eos: bool,
+    validator: ValidationSelector,
     patch=None,
     source_encoded: dict | None = None,
 ) -> dict:
@@ -359,7 +361,7 @@ def _generate_target(
         "stopped_on_eos": stopped_on_eos,
         "pred_text": pred_text,
         "target_text": record["target_text"],
-        **evaluate_output(record["task_id"], record["input_text"], pred_text, record["target_text"]),
+        **evaluate_output(record["task_id"], record["input_text"], pred_text, record["target_text"], validator),
         **_accuracy(pred_ids[: len(target_ids)], target_ids),
     }
 
@@ -417,7 +419,13 @@ def run_activation_patching(config: PatchConfig) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     (config.output_dir / "config.json").write_text(
         json.dumps(
-            {**asdict(config), "dataset_path": str(config.dataset_path), "adapter_path": str(config.adapter_path) if config.adapter_path else None, "output_dir": str(config.output_dir)},
+            {
+                **asdict(config),
+                "dataset_path": str(config.dataset_path),
+                "adapter_path": str(config.adapter_path) if config.adapter_path else None,
+                "output_dir": str(config.output_dir),
+                "validator": validator_name(config.validator),
+            },
             indent=2,
             ensure_ascii=False,
         ),
@@ -453,6 +461,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.patch_span,
                 config.prompt_format,
                 config.append_eos,
+                config.validator,
             )
             rows.append(base_row)
             base_gen = _generate_target(
@@ -466,6 +475,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.patch_span,
                 config.prompt_format,
                 config.append_eos,
+                config.validator,
             )
             generation_rows.append(base_gen)
             outcome_rows.append(
@@ -492,6 +502,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.patch_span,
                     config.prompt_format,
                     config.append_eos,
+                    config.validator,
                     patch,
                     source_encoded,
                 )
@@ -509,6 +520,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.patch_span,
                     config.prompt_format,
                     config.append_eos,
+                    config.validator,
                     patch,
                     source_encoded,
                 )
@@ -566,6 +578,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--validator", default=None, help="Override task validation: task_default, exact, single_token, integer, or yes_no.")
     return parser.parse_args()
 
 
@@ -589,6 +602,7 @@ def main() -> None:
             device=args.device,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
+            validator=args.validator,
         )
     )
     print(f"Wrote activation patching metrics to {args.output_dir}")

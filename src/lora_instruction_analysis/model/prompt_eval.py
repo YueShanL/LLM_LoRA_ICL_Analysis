@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import gc
 import json
+import os
 from pathlib import Path
 import random
 from statistics import mean
 
+from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, validator_name
 from lora_instruction_analysis.model.collect import _accuracy, _dataset_file, _read_jsonl, _torch_dtype, _write_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS, encode_record, ensure_chat_template
+
+
+os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
 @dataclass(frozen=True)
@@ -23,13 +30,15 @@ class PromptEvalConfig:
     max_samples: int | None = None
     seed: int = 13
     max_length: int = 512
-    generation_extra_tokens: int = 16
+    generation_extra_tokens: int = 128
+    run_teacher_forced: bool = True
     run_autoregressive: bool = True
     include_instruction: bool = True
     dtype: str = "auto"
     device: str = "auto"
     prompt_format: str = "raw"
     append_eos: bool = True
+    validator: ValidationSelector = None
 
 
 def _select_records(config: PromptEvalConfig) -> list[dict]:
@@ -54,12 +63,13 @@ def _load_model(config: PromptEvalConfig):
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    device = "cuda" if config.device == "auto" and torch.cuda.is_available() else config.device
     kwargs = {"torch_dtype": _torch_dtype(torch, config.dtype)}
-    if config.device == "auto":
+    if device == "auto":
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(config.model_name, **kwargs)
-    if config.device != "auto":
-        model.to(config.device)
+    if device != "auto":
+        model.to(device)
     model.eval()
     return torch, tokenizer, model
 
@@ -72,6 +82,7 @@ def _encode(
     include_instruction: bool = True,
     prompt_format: str = "raw",
     append_eos: bool = True,
+    require_target: bool = True,
 ) -> dict:
     encoded = encode_record(
         tokenizer,
@@ -82,7 +93,7 @@ def _encode(
         instruction=instruction,
         max_length=max_length,
     )
-    if not encoded["target_ids"]:
+    if require_target and not encoded["target_ids"]:
         raise ValueError(f"max_length={max_length} truncates away all target tokens for {record['sample_id']}.")
     return encoded
 
@@ -106,6 +117,7 @@ def _run_teacher_forced(
     include_instruction: bool,
     prompt_format: str,
     append_eos: bool,
+    validator: ValidationSelector,
 ) -> dict:
     encoded = _encode(tokenizer, record, instruction, max_length, include_instruction, prompt_format, append_eos)
     device = next(model.parameters()).device
@@ -119,15 +131,17 @@ def _run_teacher_forced(
     logits = outputs.logits[0, prediction_positions, :]
     pred_ids = logits.argmax(dim=-1).detach().cpu().tolist()
     metrics = _accuracy(pred_ids, encoded["target_ids"])
+    pred_text = tokenizer.decode(pred_ids, skip_special_tokens=True)
     return {
         "sample_id": record["sample_id"],
         "task_id": record["task_id"],
         "loss": float(outputs.loss.detach().cpu()),
         "prompt_tokens": encoded["prompt_length"],
         "target_tokens": len(encoded["target_ids"]),
-        "pred_text": tokenizer.decode(pred_ids, skip_special_tokens=True),
+        "pred_text": pred_text,
         "target_text": record["target_text"],
         **metrics,
+        **evaluate_output(record["task_id"], record["input_text"], pred_text, record["target_text"], validator),
     }
 
 
@@ -142,8 +156,18 @@ def _run_autoregressive(
     include_instruction: bool,
     prompt_format: str,
     append_eos: bool,
+    validator: ValidationSelector,
 ) -> dict:
-    encoded = _encode(tokenizer, record, instruction, max_length, include_instruction, prompt_format, append_eos)
+    encoded = _encode(
+        tokenizer,
+        record,
+        instruction,
+        max_length,
+        include_instruction,
+        prompt_format,
+        append_eos,
+        require_target=False,
+    )
     target_ids = encoded["target_ids"]
     prompt_ids = encoded["input_ids"][: encoded["prompt_length"]]
     device = next(model.parameters()).device
@@ -162,15 +186,17 @@ def _run_autoregressive(
 
     pred_ids = generated[0, input_ids.shape[1]:].detach().cpu().tolist()
     metrics = _token_accuracy(pred_ids, target_ids)
+    pred_text = tokenizer.decode(pred_ids, skip_special_tokens=True)
     return {
         "sample_id": record["sample_id"],
         "task_id": record["task_id"],
         "prompt_tokens": len(prompt_ids),
         "target_tokens": len(target_ids),
         "generated_tokens": len(pred_ids),
-        "pred_text": tokenizer.decode(pred_ids, skip_special_tokens=True),
-        "target_text": record["target_text"],
+        "pred_text": pred_text,
+        "target_text": record.get("target_text"),
         **metrics,
+        **evaluate_output(record["task_id"], record["input_text"], pred_text, record.get("target_text"), validator),
     }
 
 
@@ -179,6 +205,7 @@ def _summary(rows: list[dict], *, include_loss: bool) -> dict:
         "samples": len(rows),
         "mean_token_accuracy": mean(row["token_accuracy"] for row in rows) if rows else 0.0,
         "mean_sequence_accuracy": mean(row["sequence_accuracy"] for row in rows) if rows else 0.0,
+        "mean_task_semantic_correct": mean(row["task_semantic_correct"] for row in rows) if rows else 0.0,
     }
     if include_loss:
         summary["mean_loss"] = mean(row["loss"] for row in rows) if rows else 0.0
@@ -190,14 +217,20 @@ def _write_report(path: Path, summary: dict) -> None:
     autoreg = summary.get("autoregressive")
     lines = [
         "# Prompt Evaluation Report",
-        "",
-        "## Teacher-Forced",
-        "",
-        f"- samples: {teacher['samples']}",
-        f"- mean_loss: {teacher['mean_loss']:.6f}",
-        f"- mean_token_accuracy: {teacher['mean_token_accuracy']:.6f}",
-        f"- mean_sequence_accuracy: {teacher['mean_sequence_accuracy']:.6f}",
     ]
+    if teacher is not None:
+        lines.extend(
+            [
+                "",
+                "## Teacher-Forced",
+                "",
+                f"- samples: {teacher['samples']}",
+                f"- mean_loss: {teacher['mean_loss']:.6f}",
+                f"- mean_token_accuracy: {teacher['mean_token_accuracy']:.6f}",
+                f"- mean_sequence_accuracy: {teacher['mean_sequence_accuracy']:.6f}",
+                f"- mean_task_semantic_correct: {teacher['mean_task_semantic_correct']:.6f}",
+            ]
+        )
     if autoreg is not None:
         lines.extend(
             [
@@ -207,6 +240,7 @@ def _write_report(path: Path, summary: dict) -> None:
                 f"- samples: {autoreg['samples']}",
                 f"- mean_token_accuracy: {autoreg['mean_token_accuracy']:.6f}",
                 f"- mean_sequence_accuracy: {autoreg['mean_sequence_accuracy']:.6f}",
+                f"- mean_task_semantic_correct: {autoreg['mean_task_semantic_correct']:.6f}",
             ]
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -215,59 +249,69 @@ def _write_report(path: Path, summary: dict) -> None:
 def evaluate_prompt(config: PromptEvalConfig) -> dict:
     records = _select_records(config)
     torch, tokenizer, model = _load_model(config)
-    teacher_rows = [
-        _run_teacher_forced(
-            torch,
-            tokenizer,
-            model,
-            record,
-            config.instruction,
-            config.max_length,
-            config.include_instruction,
-            config.prompt_format,
-            config.append_eos,
-        )
-        for record in records
-    ]
-    autoreg_rows = [
-        _run_autoregressive(
-            torch,
-            tokenizer,
-            model,
-            record,
-            config.instruction,
-            config.max_length,
-            config.generation_extra_tokens,
-            config.include_instruction,
-            config.prompt_format,
-            config.append_eos,
-        )
-        for record in records
-    ] if config.run_autoregressive else []
+    try:
+        teacher_rows = [
+            _run_teacher_forced(
+                torch,
+                tokenizer,
+                model,
+                record,
+                config.instruction,
+                config.max_length,
+                config.include_instruction,
+                config.prompt_format,
+                config.append_eos,
+                config.validator,
+            )
+            for record in records
+        ] if config.run_teacher_forced else []
+        autoreg_rows = [
+            _run_autoregressive(
+                torch,
+                tokenizer,
+                model,
+                record,
+                config.instruction,
+                config.max_length,
+                config.generation_extra_tokens,
+                config.include_instruction,
+                config.prompt_format,
+                config.append_eos,
+                config.validator,
+            )
+            for record in records
+        ] if config.run_autoregressive else []
 
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    summary = {
-        "teacher_forced": _summary(teacher_rows, include_loss=True),
-        "autoregressive": _summary(autoreg_rows, include_loss=False) if config.run_autoregressive else None,
-        "config": {
-            **asdict(config),
-            "dataset_path": str(config.dataset_path),
-            "output_dir": str(config.output_dir),
-            "instruction_source": "none"
-            if not config.include_instruction
-            else "cli"
-            if config.instruction is not None
-            else "dataset_instruction_text",
-            "prompt_format": config.prompt_format,
-            "append_eos": config.append_eos,
-        },
-    }
-    _write_jsonl(config.output_dir / "metrics.jsonl", teacher_rows)
-    if config.run_autoregressive:
-        _write_jsonl(config.output_dir / "autoregressive_metrics.jsonl", autoreg_rows)
-    (config.output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
-    _write_report(config.output_dir / "report.md", summary)
-    return summary
+        config.output_dir.mkdir(parents=True, exist_ok=True)
+        summary = {
+            "teacher_forced": _summary(teacher_rows, include_loss=True) if config.run_teacher_forced else None,
+            "autoregressive": _summary(autoreg_rows, include_loss=False) if config.run_autoregressive else None,
+            "config": {
+                **asdict(config),
+                "dataset_path": str(config.dataset_path),
+                "output_dir": str(config.output_dir),
+                "instruction_source": "none"
+                if not config.include_instruction
+                else "cli"
+                if config.instruction is not None
+                else "dataset_instruction_text",
+                "prompt_format": config.prompt_format,
+                "append_eos": config.append_eos,
+                "validator": validator_name(config.validator),
+            },
+        }
+        if config.run_teacher_forced:
+            _write_jsonl(config.output_dir / "metrics.jsonl", teacher_rows)
+        if config.run_autoregressive:
+            _write_jsonl(config.output_dir / "autoregressive_metrics.jsonl", autoreg_rows)
+        (config.output_dir / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        _write_report(config.output_dir / "report.md", summary)
+        return summary
+    finally:
+        del model
+        gc.collect()
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 def parse_args() -> argparse.Namespace:
@@ -281,13 +325,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--generation-extra-tokens", type=int, default=16)
+    parser.add_argument("--generation-extra-tokens", type=int, default=128)
+    parser.add_argument("--skip-teacher-forced", action="store_true")
     parser.add_argument("--skip-autoregressive", action="store_true")
     parser.add_argument("--no-instruction", action="store_true")
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--validator", default=None, help="Override task validation by registered validator name; default is task-specific.")
     return parser.parse_args()
 
 
@@ -309,12 +355,14 @@ def main() -> None:
             seed=args.seed,
             max_length=args.max_length,
             generation_extra_tokens=args.generation_extra_tokens,
+            run_teacher_forced=not args.skip_teacher_forced,
             run_autoregressive=not args.skip_autoregressive,
             include_instruction=not args.no_instruction,
             dtype=args.dtype,
             device=args.device,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
+            validator=args.validator,
         )
     )
     print(json.dumps({key: summary[key] for key in ("teacher_forced", "autoregressive")}, indent=2))

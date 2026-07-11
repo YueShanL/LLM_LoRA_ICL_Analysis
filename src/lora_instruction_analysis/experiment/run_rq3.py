@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from lora_instruction_analysis.data.tasks import ValidationSelector, validator_name
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
 from lora_instruction_analysis.model.patch import PatchConfig, run_activation_patching
 from lora_instruction_analysis.model.visualize import VisualizeConfig, visualize
@@ -21,7 +22,6 @@ DEFAULT_PATCH_PAIRS = (
 DEFAULT_LAYERS = (1, 21, 27)
 RQ3_CONTROLS = (
     "unpatched",
-    "same_condition_patch",
     "base_to_target_patch",
     "source_to_target_patch",
 )
@@ -47,6 +47,7 @@ class RQ3Config:
     plots_dir: Path | None = None
     prompt_format: str = "raw"
     append_eos: bool = True
+    validator: ValidationSelector = None
 
     @property
     def resolved_output_dir(self) -> Path:
@@ -76,7 +77,6 @@ def _run_name(source_condition: str, target_condition: str, layer: int, patch_sp
 def _run_controls(source_condition: str, target_condition: str) -> list[dict]:
     return [
         {"control": "unpatched", "source_condition": None, "target_condition": target_condition},
-        {"control": "same_condition_patch", "source_condition": target_condition, "target_condition": target_condition},
         {"control": "base_to_target_patch", "source_condition": "base", "target_condition": target_condition},
         {"control": "source_to_target_patch", "source_condition": source_condition, "target_condition": target_condition},
     ]
@@ -107,6 +107,7 @@ def _infer_config(args: argparse.Namespace) -> RQ3Config:
         plots_dir=getattr(args, "plots_dir", None),
         prompt_format=getattr(args, "prompt_format", None) or run_config.get("prompt_format", "raw"),
         append_eos=False if getattr(args, "no_append_eos", False) else bool(run_config.get("append_eos", True)),
+        validator=getattr(args, "validator", None),
     )
 
 
@@ -118,6 +119,7 @@ def _jsonable(config: RQ3Config) -> dict:
     data["resolved_output_dir"] = str(config.resolved_output_dir)
     data["resolved_plots_dir"] = str(config.resolved_plots_dir)
     data["comparison"] = f"teacher-forced and autoregressive block-output activation patching over {config.patch_span} span"
+    data["validator"] = validator_name(config.validator)
     data["result_status"] = "partial"
     data["status_reason"] = "RQ3 has controls, generation metrics, semantic task scoring, and shape checks; activation-site sweep is still pending."
     data["default_patch_pairs"] = [list(pair) for pair in DEFAULT_PATCH_PAIRS]
@@ -149,7 +151,7 @@ def run_rq3(config: RQ3Config) -> None:
             {
                 "status": "partial",
                 "implemented": [
-                    "unpatched/same-condition/base-to-target/source-to-target controls",
+                    "unpatched/base-to-target/source-to-target controls",
                     "teacher-forced and autoregressive metrics",
                     "task-level semantic generation scoring",
                     "patch shape mismatch checks",
@@ -181,6 +183,7 @@ def run_rq3(config: RQ3Config) -> None:
                 device=config.device,
                 prompt_format=config.prompt_format,
                 append_eos=config.append_eos,
+                validator=config.validator,
             )
         )
     visualize(
@@ -216,6 +219,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plots-dir", type=Path)
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--validator", default=None, help="Override task validation: task_default, exact, single_token, integer, or yes_no.")
     return parser.parse_args()
 
 

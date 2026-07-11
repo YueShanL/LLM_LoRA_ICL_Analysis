@@ -1,0 +1,20 @@
+[
+  {
+    "dataset": "thu_ifbench",
+    "loaded": 444,
+    "kept": 1772,
+    "error": null
+  },
+  {
+    "dataset": "google_ifeval",
+    "loaded": 541,
+    "kept": 1512,
+    "error": null
+  },
+  {
+    "dataset": "allenai_ifbench_test",
+    "loaded": 300,
+    "kept": 472,
+    "error": null
+  }
+]

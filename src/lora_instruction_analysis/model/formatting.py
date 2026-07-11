@@ -45,7 +45,7 @@ def _instruction(record: dict, instruction: str | None) -> str:
 def _user_content(record: dict, instruction: str | None, include_instruction: bool) -> str:
     if include_instruction:
         return f"{_instruction(record, instruction)}\n\nInput:\n{record['input_text']}"
-    return f"Input:\n{record['input_text']}"
+    return record["input_text"]
 
 
 def _chat_text(tokenizer, messages: list[dict], *, add_generation_prompt: bool) -> str:
@@ -78,36 +78,42 @@ def encode_record(
     max_length: int | None = None,
 ) -> dict:
     target = record.get("target_text", record.get("target"))
-    if target is None:
-        raise KeyError("Dataset row must contain target_text or target.")
+    has_target = target is not None
+    target = target or ""
 
     if prompt_format == "raw":
         prompt = make_prompt(record["input_text"], _instruction(record, instruction), include_instruction=include_instruction)
         prompt_ids = _ids(tokenizer, prompt)
-        target_ids = _with_eos(tokenizer, _ids(tokenizer, target), append_eos)
+        target_ids = _with_eos(tokenizer, _ids(tokenizer, target), append_eos) if has_target else []
         input_ids = prompt_ids + target_ids
         labels = [-100] * len(prompt_ids) + target_ids
     elif prompt_format == "chat_template":
         user_message = {"role": "user", "content": _user_content(record, instruction, include_instruction)}
         prompt = _chat_text(tokenizer, [user_message], add_generation_prompt=True)
-        full = _chat_text(
-            tokenizer,
-            [user_message, {"role": "assistant", "content": target}],
-            add_generation_prompt=False,
-        )
-        prompt_ids = _ids(tokenizer, prompt)
-        full_ids = _ids(tokenizer, full)
-        if full_ids[: len(prompt_ids)] != prompt_ids:
-            raise ValueError("Chat template prompt is not a prefix of the full chat example.")
-        target_ids = _ids(tokenizer, target)
-        target_span = _find_span(full_ids[len(prompt_ids) :], target_ids)
-        if target_span is None:
-            raise ValueError("Could not align raw target_text inside the chat template output.")
-        input_ids = _with_eos(tokenizer, full_ids, append_eos)
-        labels = [-100] * len(input_ids)
-        target_start = len(prompt_ids) + target_span[0]
-        for index, token_id in enumerate(target_ids):
-            labels[target_start + index] = token_id
+        if not has_target:
+            prompt_ids = _ids(tokenizer, prompt)
+            input_ids = prompt_ids
+            labels = [-100] * len(input_ids)
+            target_ids = []
+        else:
+            full = _chat_text(
+                tokenizer,
+                [user_message, {"role": "assistant", "content": target}],
+                add_generation_prompt=False,
+            )
+            prompt_ids = _ids(tokenizer, prompt)
+            full_ids = _ids(tokenizer, full)
+            if full_ids[: len(prompt_ids)] != prompt_ids:
+                raise ValueError("Chat template prompt is not a prefix of the full chat example.")
+            target_ids = _ids(tokenizer, target)
+            target_span = _find_span(full_ids[len(prompt_ids) :], target_ids)
+            if target_span is None:
+                raise ValueError("Could not align raw target_text inside the chat template output.")
+            input_ids = _with_eos(tokenizer, full_ids, append_eos)
+            labels = [-100] * len(input_ids)
+            target_start = len(prompt_ids) + target_span[0]
+            for index, token_id in enumerate(target_ids):
+                labels[target_start + index] = token_id
     else:
         raise ValueError(f"Unknown prompt_format {prompt_format!r}; use raw or chat_template.")
 

@@ -10,9 +10,17 @@ import random
 from typing import Iterable
 
 from .sources import get_source, iter_builtin_fallback_texts, iter_public_texts
-from .tasks import get_task
+from .tasks import get_task, task_default_prompt, task_default_prompt_variant_name
 
-ARITHMETIC_TASK_IDS = {"at_operator_mod_minus_left"}
+ARITHMETIC_TASK_IDS = {"at_operator_mod_minus_left", "sum_two_numbers"}
+SYNTHETIC_INPUT_TASK_IDS = {
+    "extract_items_from_set",
+    "has_repeated_word",
+    "words_containing_bigram_qu",
+    "list_letters_space_separated",
+    "exact_three_word_prefix",
+    "formal_language_a_n_b_n",
+}
 
 
 @dataclass(frozen=True)
@@ -87,7 +95,7 @@ def make_record(
 
 
 def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
-    if config.task_id in ARITHMETIC_TASK_IDS:
+    if config.task_id == "at_operator_mod_minus_left":
         pairs = [(a, b) for a in range(100) for b in range(1, 100)]
         if len(pairs) < config.total_size:
             raise ValueError(
@@ -95,6 +103,70 @@ def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
             )
         random.Random(config.seed).shuffle(pairs)
         return [f"{a}@{b}=?" for a, b in pairs[: config.total_size]]
+    if config.task_id == "sum_two_numbers":
+        pairs = [(a, b) for a in range(100) for b in range(100)]
+        if len(pairs) < config.total_size:
+            raise ValueError(
+                f"Only {len(pairs)} unique a+b examples are available, but {config.total_size} are required."
+            )
+        random.Random(config.seed).shuffle(pairs)
+        return [f"{a}+{b}=?" for a, b in pairs[: config.total_size]]
+    if config.task_id in SYNTHETIC_INPUT_TASK_IDS:
+        inputs = {
+            "extract_items_from_set": [
+                "dax moon wug table",
+                "river chair stone",
+                "blick amber dax",
+                "cloud wug metal",
+                "paper glass road",
+                "dax wug blick",
+            ],
+            "has_repeated_word": [
+                "red blue red",
+                "alpha beta gamma",
+                "one two three two",
+                "north south east",
+                "quiet quiet signal",
+                "stone river cloud",
+            ],
+            "words_containing_bigram_qu": [
+                "quick stone square",
+                "alpha beta gamma",
+                "quiet liquid question",
+                "river cloud metal",
+                "quartz bright equal",
+                "plain simple words",
+            ],
+            "list_letters_space_separated": [
+                "alpha beta gamma",
+                "river stone cloud",
+                "signal bright metal",
+                "paper glass road",
+                "quiet simple words",
+                "dataset sample text",
+            ],
+            "exact_three_word_prefix": [
+                "alpha beta gamma delta",
+                "river stone cloud metal",
+                "signal bright paper road",
+                "quiet simple words here",
+                "dataset sample text row",
+                "small public example sentence",
+            ],
+            "formal_language_a_n_b_n": [
+                "ab",
+                "aabb",
+                "aaabbb",
+                "aab",
+                "abb",
+                "ba",
+                "aaaabbbb",
+                "aaabb",
+            ],
+        }[config.task_id]
+        repeated = (inputs * ((config.total_size // len(inputs)) + 1))[: config.total_size]
+        random.Random(config.seed).shuffle(repeated)
+        return repeated
 
     if config.max_source_rows == 0 and config.allow_builtin_fallback:
         texts = list(iter_builtin_fallback_texts())
@@ -118,6 +190,8 @@ def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
     unique_texts = list(dict.fromkeys(texts))
     if len(unique_texts) < config.total_size and config.allow_builtin_fallback:
         unique_texts = list(dict.fromkeys([*unique_texts, *iter_builtin_fallback_texts()]))
+    if len(unique_texts) < config.total_size and config.allow_builtin_fallback and unique_texts:
+        unique_texts = (unique_texts * ((config.total_size // len(unique_texts)) + 1))[: config.total_size]
     if len(unique_texts) < config.total_size:
         raise ValueError(
             f"Only collected {len(unique_texts)} usable source texts, "
@@ -152,7 +226,7 @@ def build_dataset(config: DatasetBuildConfig) -> dict[str, list[dict]]:
                 sample_id=f"{config.task_id}-{idx:06d}",
                 task_id=config.task_id,
                 input_text=input_text,
-                instruction_text=task.natural_language_instruction,
+                instruction_text=task_default_prompt(config.task_id),
                 target_text=target_text,
                 condition=config.condition,
                 include_instruction_in_prompt=config.include_instruction_in_prompt,
@@ -208,6 +282,8 @@ def write_dataset(config: DatasetBuildConfig, splits: dict[str, list[dict]]) -> 
         "task": {
             "task_id": task.task_id,
             "natural_language_instruction": task.natural_language_instruction,
+            "default_instruction_prompt": task_default_prompt(config.task_id),
+            "default_prompt_variant": task_default_prompt_variant_name(config.task_id),
             "allowed_output_format": task.allowed_output_format,
         },
         "splits": {name: len(records) for name, records in splits.items()},

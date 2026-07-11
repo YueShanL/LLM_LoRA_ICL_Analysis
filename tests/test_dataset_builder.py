@@ -72,3 +72,28 @@ def test_at_operator_task_generates_unique_unseen_test_inputs():
     sample = splits["train"][0]
     a_text, b_text = sample["input_text"][:-2].split("@")
     assert sample["target_text"] == str(int(a_text) % int(b_text) - int(a_text))
+
+
+def test_mechanism_candidate_tasks_build_validation_rows():
+    for task_id in (
+        "list_letters_space_separated",
+        "sum_two_numbers",
+        "exact_three_word_prefix",
+        "extract_items_from_set",
+        "has_repeated_word",
+        "words_containing_bigram_qu",
+        "formal_language_a_n_b_n",
+    ):
+        splits = build_dataset(
+            DatasetBuildConfig(
+                task_id=task_id,
+                train_size=0,
+                validation_size=0,
+                test_size=16,
+                max_source_rows=0,
+                allow_builtin_fallback=True,
+                write_hf_dataset=False,
+            )
+        )
+        assert len(splits["test"]) == 16
+        assert all(record["target_text"] for record in splits["test"])

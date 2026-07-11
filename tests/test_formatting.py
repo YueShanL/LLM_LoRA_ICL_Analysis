@@ -34,6 +34,15 @@ def _record():
     }
 
 
+def _targetless_record():
+    return {
+        "sample_id": "s1",
+        "task_id": "word_count",
+        "input_text": "hello world",
+        "instruction_text": "count words",
+    }
+
+
 def test_raw_format_masks_prompt_and_appends_eos():
     encoded = encode_record(CharTokenizer(), _record(), include_instruction=False)
 
@@ -63,3 +72,39 @@ def test_chat_template_masks_template_suffix_and_eos():
     assert encoded["input_ids"][-1] == 3
     assert encoded["labels"][-1] == -100
     assert all(row["span"] == "target" for row in encoded["source_alignment"][-2:])
+
+
+def test_chat_template_without_instruction_uses_bare_input_text():
+    encoded = encode_record(
+        ChatTokenizer(),
+        _record(),
+        include_instruction=False,
+        prompt_format="chat_template",
+    )
+
+    prompt = "".join(chr(token_id) for token_id, label in zip(encoded["input_ids"], encoded["labels"]) if label == -100)
+    assert "<user>ab</>" in prompt
+    assert "Input:" not in prompt
+
+
+def test_raw_format_allows_generation_only_record_without_target():
+    encoded = encode_record(CharTokenizer(), _targetless_record(), include_instruction=True)
+
+    assert encoded["target"] == ""
+    assert encoded["target_ids"] == []
+    assert encoded["prompt_length"] == len(encoded["input_ids"])
+    assert all(label == -100 for label in encoded["labels"])
+
+
+def test_chat_template_allows_generation_only_record_without_target():
+    encoded = encode_record(
+        ChatTokenizer(),
+        _targetless_record(),
+        include_instruction=True,
+        prompt_format="chat_template",
+    )
+
+    assert encoded["target"] == ""
+    assert encoded["target_ids"] == []
+    assert encoded["prompt_length"] == len(encoded["input_ids"])
+    assert all(label == -100 for label in encoded["labels"])
