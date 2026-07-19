@@ -22,6 +22,7 @@ class TransformationTask:
     allowed_output_format: str
     transform: TransformFn
     validation_kind: str = "fixed_target"
+    max_generate_tokens: int | None = None
 
 
 def _add_zxq_after_t_or_l(text: str) -> str:
@@ -218,6 +219,7 @@ _TASKS: dict[str, TransformationTask] = {
         allowed_output_format="A base-10 integer as plain text.",
         transform=_at_operator_mod_minus_left,
         validation_kind="constraint",
+        max_generate_tokens=128,
     ),
     "first_letter": TransformationTask(
         task_id="first_letter",
@@ -596,6 +598,10 @@ _NAMED_VALIDATORS: dict[str, ValidationFn] = {
 }
 
 _TASK_VALIDATOR_NAMES = _validator_name_by_task()
+if set(_TASK_VALIDATOR_NAMES) != set(_TASKS):
+    missing = sorted(set(_TASKS) - set(_TASK_VALIDATOR_NAMES))
+    extra = sorted(set(_TASK_VALIDATOR_NAMES) - set(_TASKS))
+    raise RuntimeError(f"Task validator registry mismatch: missing={missing}, extra={extra}")
 
 
 def validator_name(validator: ValidationSelector) -> str:
@@ -619,11 +625,23 @@ def _resolve_validator(task_id: str, validator: ValidationSelector = None) -> Va
 
 
 def task_default_validator_name(task_id: str) -> str:
-    return _TASK_VALIDATOR_NAMES.get(task_id, "fixed_exact")
+    try:
+        return _TASK_VALIDATOR_NAMES[task_id]
+    except KeyError as exc:
+        raise KeyError(f"No explicit validator is registered for task_id {task_id!r}.") from exc
+
+
+def resolved_validator_name(task_id: str, validator: ValidationSelector = None) -> str:
+    """Return the auditable validator name, never the moving alias task_default."""
+    if validator in (None, "task_default"):
+        return task_default_validator_name(task_id)
+    selected = validator_name(validator)
+    _resolve_validator(task_id, validator)
+    return selected
 
 
 def task_validation_kind(task_id: str, validator: ValidationSelector = None) -> str:
-    selected = validator_name(validator) if validator not in (None, "task_default") else task_default_validator_name(task_id)
+    selected = resolved_validator_name(task_id, validator)
     return "constraint" if selected.startswith("constraint_") else "fixed_target"
 
 
@@ -651,7 +669,7 @@ def evaluate_output(
     validator: ValidationSelector = None,
 ) -> dict:
     """Score a generated string against the registered task semantics."""
-    selected_validator = validator_name(validator) if validator not in (None, "task_default") else task_default_validator_name(task_id)
+    selected_validator = resolved_validator_name(task_id, validator)
     validation_kind = task_validation_kind(task_id, validator)
     try:
         task_expected_text = get_task(task_id).transform(input_text)

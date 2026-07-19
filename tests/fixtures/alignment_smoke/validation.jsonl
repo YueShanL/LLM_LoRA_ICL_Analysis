@@ -1,0 +1,1 @@
+{"sample_id":"alignment-smoke-001","task_id":"reverse_words","input_text":"one two three","instruction_text":"Reverse the order of the words in the input.","target_text":"three two one","condition":"alignment_smoke"}

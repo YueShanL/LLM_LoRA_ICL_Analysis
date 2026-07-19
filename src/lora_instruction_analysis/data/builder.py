@@ -7,20 +7,19 @@ import csv
 import json
 from pathlib import Path
 import random
+import re
 from typing import Iterable
 
-from .sources import get_source, iter_builtin_fallback_texts, iter_public_texts
-from .tasks import get_task, task_default_prompt, task_default_prompt_variant_name
+from .sources import get_source, iter_public_texts
+from .tasks import (
+    get_task,
+    task_default_prompt,
+    task_default_prompt_variant_name,
+    task_default_validator_name,
+)
 
 ARITHMETIC_TASK_IDS = {"at_operator_mod_minus_left", "sum_two_numbers"}
-SYNTHETIC_INPUT_TASK_IDS = {
-    "extract_items_from_set",
-    "has_repeated_word",
-    "words_containing_bigram_qu",
-    "list_letters_space_separated",
-    "exact_three_word_prefix",
-    "formal_language_a_n_b_n",
-}
+PROMPT_TEMPLATE_VERSION = "input_output_v1"
 
 
 @dataclass(frozen=True)
@@ -39,8 +38,10 @@ class DatasetBuildConfig:
     include_instruction_in_prompt: bool = False
     write_csv: bool = True
     write_hf_dataset: bool = True
-    allow_builtin_fallback: bool = False
     streaming: bool = False
+    model_name: str | None = None
+    tokenizer_name: str | None = None
+    prompt_template: str = PROMPT_TEMPLATE_VERSION
 
     @property
     def total_size(self) -> int:
@@ -111,94 +112,64 @@ def _collect_inputs(config: DatasetBuildConfig) -> list[str]:
             )
         random.Random(config.seed).shuffle(pairs)
         return [f"{a}+{b}=?" for a, b in pairs[: config.total_size]]
-    if config.task_id in SYNTHETIC_INPUT_TASK_IDS:
-        inputs = {
-            "extract_items_from_set": [
-                "dax moon wug table",
-                "river chair stone",
-                "blick amber dax",
-                "cloud wug metal",
-                "paper glass road",
-                "dax wug blick",
-            ],
-            "has_repeated_word": [
-                "red blue red",
-                "alpha beta gamma",
-                "one two three two",
-                "north south east",
-                "quiet quiet signal",
-                "stone river cloud",
-            ],
-            "words_containing_bigram_qu": [
-                "quick stone square",
-                "alpha beta gamma",
-                "quiet liquid question",
-                "river cloud metal",
-                "quartz bright equal",
-                "plain simple words",
-            ],
-            "list_letters_space_separated": [
-                "alpha beta gamma",
-                "river stone cloud",
-                "signal bright metal",
-                "paper glass road",
-                "quiet simple words",
-                "dataset sample text",
-            ],
-            "exact_three_word_prefix": [
-                "alpha beta gamma delta",
-                "river stone cloud metal",
-                "signal bright paper road",
-                "quiet simple words here",
-                "dataset sample text row",
-                "small public example sentence",
-            ],
-            "formal_language_a_n_b_n": [
-                "ab",
-                "aabb",
-                "aaabbb",
-                "aab",
-                "abb",
-                "ba",
-                "aaaabbbb",
-                "aaabb",
-            ],
-        }[config.task_id]
-        repeated = (inputs * ((config.total_size // len(inputs)) + 1))[: config.total_size]
-        random.Random(config.seed).shuffle(repeated)
-        return repeated
-
-    if config.max_source_rows == 0 and config.allow_builtin_fallback:
-        texts = list(iter_builtin_fallback_texts())
-    else:
-        source = get_source(config.source_id)
-        try:
-            texts = list(
-                iter_public_texts(
-                    source,
-                    max_source_rows=config.max_source_rows,
-                    min_words=config.min_words,
-                    max_words=config.max_words,
-                    streaming=config.streaming,
-                )
-            )
-        except Exception:
-            if not config.allow_builtin_fallback:
-                raise
-            texts = list(iter_builtin_fallback_texts())
+    if config.task_id == "formal_language_a_n_b_n":
+        rng = random.Random(config.seed)
+        max_length = max(64, config.total_size)
+        inputs: list[str] = []
+        seen = set()
+        while len(inputs) < config.total_size:
+            a_length = rng.randint(1, max_length)
+            same_length = rng.randint(0, 1)
+            random_b_length = rng.randint(1, max_length)
+            if not same_length and random_b_length == a_length:
+                random_b_length = random_b_length % max_length + 1
+            b_length = a_length if same_length else random_b_length
+            text = "a" * a_length + "b" * b_length
+            if text not in seen:
+                seen.add(text)
+                inputs.append(text)
+        return inputs
+    source = get_source(config.source_id)
+    texts = list(
+        iter_public_texts(
+            source,
+            max_source_rows=config.max_source_rows,
+            min_words=config.min_words,
+            max_words=config.max_words,
+            streaming=config.streaming,
+        )
+    )
 
     unique_texts = list(dict.fromkeys(texts))
-    if len(unique_texts) < config.total_size and config.allow_builtin_fallback:
-        unique_texts = list(dict.fromkeys([*unique_texts, *iter_builtin_fallback_texts()]))
-    if len(unique_texts) < config.total_size and config.allow_builtin_fallback and unique_texts:
-        unique_texts = (unique_texts * ((config.total_size // len(unique_texts)) + 1))[: config.total_size]
     if len(unique_texts) < config.total_size:
         raise ValueError(
-            f"Only collected {len(unique_texts)} usable source texts, "
-            f"but {config.total_size} are required. Increase --max-source-rows, "
-            "choose another source, reduce split sizes, or pass --allow-builtin-fallback."
+            f"Declared source route {config.source_id!r} produced {len(unique_texts)} unique rows, "
+            f"but {config.total_size} are required. Increase --max-source-rows, choose another "
+            "declared source route, or reduce split sizes."
         )
     random.Random(config.seed).shuffle(unique_texts)
+    if config.task_id == "words_containing_bigram_qu":
+        rng = random.Random(config.seed)
+        augmented = []
+        for text in unique_texts:
+            if "qu" in text.lower():
+                continue
+            words = text.split()
+            eligible = [index for index, word in enumerate(words) if re.search(r"[A-Za-z]", word)]
+            if rng.randint(0, 1):
+                word_index = rng.choice(eligible)
+                match = re.search(r"[A-Za-z]+", words[word_index])
+                assert match is not None
+                insertion = rng.randint(match.start(), match.end())
+                word = words[word_index]
+                words[word_index] = f"{word[:insertion]}qu{word[insertion:]}"
+            augmented.append(" ".join(words))
+            if len(augmented) == config.total_size:
+                return augmented
+        raise ValueError(
+            f"Declared source route {config.source_id!r} produced only {len(augmented)} qu-ready rows, "
+            f"but {config.total_size} are required."
+        )
     return unique_texts
 
 
@@ -272,19 +243,64 @@ def write_hf_dataset(output_dir: Path, splits: dict[str, list[dict]]) -> None:
 
 
 def write_dataset(config: DatasetBuildConfig, splits: dict[str, list[dict]]) -> None:
+    from .validation import validate_splits
+
+    validate_splits(
+        splits,
+        {"train": config.train_size, "validation": config.validation_size, "test": config.test_size},
+    )
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
-    source = get_source(config.source_id)
     task = get_task(config.task_id)
+    arithmetic = config.task_id in ARITHMETIC_TASK_IDS
+    source = (
+        {"source_id": f"{config.task_id}_grid", "route": "deterministic_arithmetic_grid"}
+        if arithmetic
+        else {
+            "source_id": "three_random_lengths",
+            "route": "seeded_a_length_equal_flag_b_length",
+        }
+        if config.task_id == "formal_language_a_n_b_n"
+        else asdict(get_source(config.source_id))
+    )
+    route_kind = (
+        "deterministic_arithmetic"
+        if arithmetic
+        else "seeded_synthetic"
+        if config.task_id == "formal_language_a_n_b_n"
+        else "seeded_text_augmentation"
+        if config.task_id == "words_containing_bigram_qu"
+        else "text_source"
+    )
     manifest = {
         "config": {**asdict(config), "output_dir": str(config.output_dir)},
-        "source": asdict(source),
+        "data_route": {
+            "kind": route_kind,
+            "source_id": source["source_id"],
+            "seed": config.seed,
+            "max_source_rows": config.max_source_rows,
+            "streaming": config.streaming,
+            "generator": (
+                "a_length/equal_flag/b_length"
+                if config.task_id == "formal_language_a_n_b_n"
+                else "random_qu_insertion"
+                if config.task_id == "words_containing_bigram_qu"
+                else None
+            ),
+        },
+        "source": source,
         "task": {
             "task_id": task.task_id,
             "natural_language_instruction": task.natural_language_instruction,
             "default_instruction_prompt": task_default_prompt(config.task_id),
             "default_prompt_variant": task_default_prompt_variant_name(config.task_id),
+            "validator": task_default_validator_name(config.task_id),
             "allowed_output_format": task.allowed_output_format,
+        },
+        "target_tokenization": {
+            "model_name": config.model_name,
+            "tokenizer": config.tokenizer_name or config.model_name,
+            "prompt_template": config.prompt_template,
         },
         "splits": {name: len(records) for name, records in splits.items()},
         "format_notes": {

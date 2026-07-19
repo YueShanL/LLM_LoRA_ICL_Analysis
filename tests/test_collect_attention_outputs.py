@@ -15,7 +15,8 @@ class FakeSelfAttention(nn.Module):
         super().__init__()
         self.num_heads = 2
         self.head_dim = 3
-        self.o_proj = nn.Identity()
+        self.o_proj = nn.Linear(6, 6, bias=False)
+        self.o_proj.weight.data.copy_(torch.eye(6))
 
     def forward(self, x):
         return self.o_proj(x)
@@ -44,7 +45,9 @@ class FakeModel(nn.Module):
 class CollectAttentionOutputTests(unittest.TestCase):
     def test_collects_pre_o_proj_outputs_by_module_head_layout(self):
         model = FakeModel()
-        captures, handles, expected_layers = _attention_output_hooks(model, torch.tensor([1, 2]))
+        pre_captures, post_captures, head_ablation_captures, handles, expected_layers = _attention_output_hooks(
+            model, torch.tensor([1, 2])
+        )
         try:
             x = torch.arange(1 * 4 * 6, dtype=torch.float32).view(1, 4, 6)
             model(x)
@@ -52,10 +55,16 @@ class CollectAttentionOutputTests(unittest.TestCase):
             for handle in handles:
                 handle.remove()
 
-        stacked = _stack_attention_outputs(torch, captures, expected_layers)
+        stacked = _stack_attention_outputs(torch, pre_captures, expected_layers)
+        post_stacked = _stack_attention_outputs(torch, post_captures, expected_layers)
+        ablation_stacked = _stack_attention_outputs(torch, head_ablation_captures, expected_layers)
 
         self.assertEqual(tuple(stacked.shape), (2, 2, 2, 3))
+        self.assertEqual(tuple(post_stacked.shape), (2, 2, 6))
+        self.assertEqual(tuple(ablation_stacked.shape), (2, 2, 2, 4))
         self.assertTrue(torch.equal(stacked[0], x[0, [1, 2], :].view(2, 2, 3).permute(1, 0, 2)))
+        self.assertTrue(torch.equal(post_stacked[0], x[0, [1, 2], :]))
+        self.assertTrue(torch.all(ablation_stacked[..., 1] > 0))
 
     def test_missing_head_layout_fails(self):
         model = FakeModel()

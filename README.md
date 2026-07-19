@@ -8,7 +8,7 @@ Use the project virtual environment once it is repaired or recreated:
 
 ```powershell
 venv\Scripts\python.exe -m pip install -e .
-venv\Scripts\python.exe -m lora_instruction_analysis.data.cli --task last_word --source wikitext --output-dir data/generated/last_word
+venv\Scripts\python.exe -m lora_instruction_analysis.data.cli --task last_word --source wikitext --model-name meta-llama/Llama-3.2-3B --output-dir data/generated/last_word
 ```
 
 For instruction-model acceptance checks, try `last_word`, `word_count`, or `uppercase_last_word`; `base + instruction`
@@ -34,6 +34,7 @@ instruction, input, output, prompt, response, text, messages
 venv\Scripts\python.exe -m lora_instruction_analysis.data.cli `
   --task last_word `
   --source wikitext `
+  --model-name meta-llama/Llama-3.2-3B `
   --max-source-rows 500 `
   --train-size 300 `
   --validation-size 50 `
@@ -56,6 +57,14 @@ data/generated/last_word/
 ```
 
 `hf_dataset/` is written when the `datasets` package is installed.
+
+Validate the DatasetModule artifact (fields, split sizes, duplicate inputs,
+empty targets, and single-task integrity) with the only dataset validation
+entry point:
+
+```powershell
+venv\Scripts\python.exe -m lora_instruction_analysis.data.validation data/generated/last_word
+```
 
 ## Train a LoRA Adapter
 
@@ -87,6 +96,8 @@ when the dataset has one.
 
 Prompt evaluation loads a generated dataset, applies an instruction prompt, and
 writes teacher-forced plus greedy autoregressive token/sequence accuracy metrics.
+Pass `--adapter-path` to evaluate a LoRA adapter with the same resolved task
+validator used by acceptance and RQ3.
 
 ```powershell
 venv\Scripts\python.exe -m lora_instruction_analysis.model.prompt_eval `
@@ -103,8 +114,10 @@ Pass `--skip-autoregressive` for teacher-forced-only checks.
 
 ## Validate a Task
 
-Check whether the task is useful for mechanism comparison: instruction prompt
-accuracy must be high, while no-instruction accuracy must stay low.
+Check whether the task is useful for mechanism comparison: all three registered
+prompt variants are evaluated deterministically, the best is reported, and its
+accuracy must be high while no-instruction accuracy stays low. This module is
+the only acceptance entry point; the former screening runner was removed.
 
 Quickly build test cases from a registered transformation task and validate one
 instruction prompt against a chosen model:
@@ -119,7 +132,23 @@ venv\Scripts\python.exe -m lora_instruction_analysis.model.task_acceptance `
 ```
 
 `--task` selects the registered transformation function used to generate
-`target_text`. Use `--dataset-path` instead when the dataset already exists.
+`target_text` from the declared `--source` route. Route failures are fatal; no
+alternate data source is selected. Use `--dataset-path` when the dataset exists.
+
+## Generate Fixed-State Format Targets
+
+The format-target module is the only target-generation entry point. It writes
+attempted records, used sources, format-valid accepted records, splits, and one
+manifest per fixed target state. Failed generations are retried on unused source
+rows until each selected state has 1,000 accepted rows or the attempt limit is
+reached with an explicit failure.
+
+```powershell
+venv\Scripts\python.exe -m lora_instruction_analysis.model.format_targets `
+  --sources data/format_instruction_sources_run1/sources.jsonl `
+  --output-dir data/format_instruction_targets `
+  --model-name meta-llama/Llama-3.2-3B-Instruct
+```
 
 ```powershell
 venv\Scripts\python.exe -m lora_instruction_analysis.model.task_acceptance `

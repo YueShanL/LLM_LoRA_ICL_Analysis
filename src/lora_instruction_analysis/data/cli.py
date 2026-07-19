@@ -39,8 +39,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--no-csv", action="store_true")
     parser.add_argument("--no-hf-dataset", action="store_true")
-    parser.add_argument("--allow-builtin-fallback", action="store_true")
     parser.add_argument("--streaming", action="store_true")
+    parser.add_argument("--model-name", help="Model whose tokenizer defines canonical target tokenization.")
+    parser.add_argument("--tokenizer-name", help="Tokenizer id; defaults to --model-name.")
+    parser.add_argument("--prompt-template", default="input_output_v1")
     return parser.parse_args()
 
 
@@ -58,6 +60,8 @@ def main() -> None:
         raise SystemExit("--task is required unless --list-tasks or --list-sources is used.")
     if args.output_dir is None:
         raise SystemExit("--output-dir is required unless --list-tasks or --list-sources is used.")
+    if args.model_name is None:
+        raise SystemExit("--model-name is required to record canonical target tokenization.")
     config = DatasetBuildConfig(
         task_id=args.task,
         source_id=args.source,
@@ -73,8 +77,10 @@ def main() -> None:
         include_instruction_in_prompt=args.include_instruction_in_prompt,
         write_csv=not args.no_csv,
         write_hf_dataset=not args.no_hf_dataset,
-        allow_builtin_fallback=args.allow_builtin_fallback,
         streaming=args.streaming,
+        model_name=args.model_name,
+        tokenizer_name=args.tokenizer_name,
+        prompt_template=args.prompt_template,
     )
     splits = build_dataset(config)
     write_dataset(config, splits)

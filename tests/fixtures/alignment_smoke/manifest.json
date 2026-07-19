@@ -1,0 +1,11 @@
+{
+  "config": {"seed": 13},
+  "data_route": {"kind": "fixed_test_fixture", "source_id": "alignment_smoke_v1", "seed": 13},
+  "task": {"task_id": "reverse_words", "validator": "fixed_exact"},
+  "target_tokenization": {
+    "model_name": "fixture-tokenizer",
+    "tokenizer": "fixture-tokenizer",
+    "prompt_template": "input_output_v1"
+  },
+  "splits": {"train": 1, "validation": 1, "test": 1}
+}

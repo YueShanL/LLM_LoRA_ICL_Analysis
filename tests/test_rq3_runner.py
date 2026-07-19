@@ -1,3 +1,4 @@
+from argparse import Namespace
 from pathlib import Path
 import json
 import sys
@@ -11,6 +12,53 @@ from lora_instruction_analysis.experiment import run_rq3
 
 
 class RQ3RunnerTests(unittest.TestCase):
+    def test_infers_task_generation_budget_when_not_explicit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = root / "data"
+            data.mkdir()
+            (root / "config.json").write_text(
+                json.dumps(
+                    {
+                        "model_name": "model",
+                        "dataset_dir": str(data),
+                        "adapter_dir": str(root / "adapter"),
+                        "seed": 7,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (data / "test.jsonl").write_text(
+                '{"sample_id":"s1","task_id":"at_operator_mod_minus_left","input_text":"17@5=?","target_text":"-15","instruction_text":"compute"}\n',
+                encoding="utf-8",
+            )
+
+            config = run_rq3._infer_config(
+                Namespace(
+                    run_dir=root,
+                    model_name=None,
+                    dataset_path=None,
+                    adapter_path=None,
+                    source_condition=None,
+                    target_condition=None,
+                    layer=None,
+                    split="test",
+                    max_samples=None,
+                    seed=None,
+                    max_new_tokens=None,
+                    patch_span="text",
+                    dtype="auto",
+                    device="auto",
+                    output_dir=None,
+                    plots_dir=None,
+                    prompt_format=None,
+                    no_append_eos=False,
+                    validator=None,
+                )
+            )
+
+            self.assertEqual(config.max_new_tokens, 128)
+
     def test_rq3_writes_patch_loss_plot(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

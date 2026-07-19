@@ -43,7 +43,6 @@ class ExperimentConfig:
     qlora: bool
     device_map: str | None
     include_instruction_in_prompt: bool
-    allow_builtin_fallback: bool
     streaming: bool
     prompt_format: str
     append_eos: bool
@@ -101,8 +100,10 @@ def run_experiment(config: ExperimentConfig) -> None:
         seed=config.seed,
         condition="lora_training",
         include_instruction_in_prompt=config.include_instruction_in_prompt,
-        allow_builtin_fallback=config.allow_builtin_fallback,
         streaming=config.streaming,
+        model_name=config.model_name,
+        tokenizer_name=config.model_name,
+        prompt_template=f"{config.prompt_format}_target_v1",
     )
     write_dataset(dataset_config, build_dataset(dataset_config))
 
@@ -159,7 +160,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qlora", action="store_true")
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--include-instruction-in-prompt", action="store_true")
-    parser.add_argument("--allow-builtin-fallback", action="store_true")
     parser.add_argument("--streaming", action="store_true")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
@@ -194,7 +194,6 @@ def main() -> None:
         qlora=args.qlora,
         device_map=args.device_map or None,
         include_instruction_in_prompt=args.include_instruction_in_prompt,
-        allow_builtin_fallback=args.allow_builtin_fallback,
         streaming=args.streaming,
         prompt_format=args.prompt_format,
         append_eos=not args.no_append_eos,

@@ -79,6 +79,10 @@ def test_all_tasks_have_collected_default_prompt():
     assert task_default_prompt_variant("words_containing_bigram_qu") == 3
 
 
+def test_at_operator_uses_long_generation_budget():
+    assert get_task("at_operator_mod_minus_left").max_generate_tokens == 128
+
+
 def test_task_validators_tolerate_generation_tail_text():
     assert validate_generated_output("last_word", "Hello tiny world.", "world\nDone.", "world")
     assert validate_generated_output("word_count", "Hello tiny world.", "The answer is 3.", "3")

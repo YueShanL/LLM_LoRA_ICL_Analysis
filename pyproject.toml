@@ -22,9 +22,11 @@ train = [
 
 [project.scripts]
 lia-generate-data = "lora_instruction_analysis.data.cli:main"
+lia-validate-data = "lora_instruction_analysis.data.validation:main"
 lia-train-lora = "lora_instruction_analysis.model.train_lora:main"
 lia-prompt-eval = "lora_instruction_analysis.model.prompt_eval:main"
 lia-validate-task = "lora_instruction_analysis.model.task_acceptance:main"
+lia-generate-format-targets = "lora_instruction_analysis.model.format_targets:main"
 lia-collect-states = "lora_instruction_analysis.model.collect:main"
 lia-visualize-states = "lora_instruction_analysis.model.visualize:main"
 lia-run-lora = "lora_instruction_analysis.experiment.run_lora:main"

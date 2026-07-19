@@ -66,6 +66,7 @@ def collect(root: Path, acceptance_root: Path) -> tuple[dict[str, float], dict[s
         rates[task] = instruction_pass_rate(acceptance_root, task)
         datasets["rq1_similarity"][task] = rows_for(task_dir, (Path("plots/rq1/token_similarity.csv"),))
         datasets["rq1_cka"][task] = datasets["rq1_similarity"][task]
+        datasets["rq1_delta_subspace"][task] = read_csv(task_dir / "plots/rq1/delta_subspace_summary.csv") if (task_dir / "plots/rq1/delta_subspace_summary.csv").exists() else []
         datasets["rq2_attention_prob"][task] = rows_for(
             task_dir,
             (
@@ -77,21 +78,28 @@ def collect(root: Path, acceptance_root: Path) -> tuple[dict[str, float], dict[s
             task_dir,
             (Path("plots/rq21/attention_outputs/token_similarity.csv"),),
         )
+        datasets["rq2_attention_post_o_proj_output"][task] = rows_for(
+            task_dir,
+            (Path("plots/rq21/attention_post_o_proj_outputs/token_similarity.csv"),),
+        )
     return rates, datasets
 
 
 def plot_lines(series_by_task: dict[str, dict[int, float]], title: str, ylabel: str, output: Path) -> None:
     fig, ax = plt.subplots(figsize=(12, 7))
+    plotted = False
     for task, series in sorted(series_by_task.items()):
         if not series:
             continue
         layers = list(series)
         ax.plot(layers, [series[layer] for layer in layers], marker="o", linewidth=1.4, markersize=3, label=task)
+        plotted = True
     ax.set_title(title)
     ax.set_xlabel("Layer")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.25)
-    ax.legend(fontsize=8, ncol=2)
+    if plotted:
+        ax.legend(fontsize=8, ncol=2)
     fig.tight_layout()
     fig.savefig(output, dpi=180)
     plt.close(fig)
@@ -137,6 +145,13 @@ def write_plots(root: Path, output_dir: Path, acceptance_root: Path) -> list[Pat
         ("rq1_cka", "cka_similarity", "RQ1 CKA Across Tasks", "Mean CKA similarity"),
         ("rq2_attention_prob", "cosine_similarity", "RQ2 Attention Probability Similarity Across Tasks", "Mean cosine similarity"),
         ("rq2_attention_output", "cosine_similarity", "RQ2 Attention Output Similarity Across Tasks", "Mean cosine similarity"),
+        (
+            "rq2_attention_post_o_proj_output",
+            "cosine_similarity",
+            "RQ2 Post-o_proj Attention Output Similarity Across Tasks",
+            "Mean cosine similarity",
+        ),
+        ("rq1_delta_subspace", "subspace_cosine_mean", "RQ1 Delta Subspace Similarity Across Tasks", "Mean top-k subspace cosine"),
     )
     written: list[Path] = []
     for key, metric, title, ylabel in specs:
@@ -151,6 +166,22 @@ def write_plots(root: Path, output_dir: Path, acceptance_root: Path) -> list[Pat
         path = output_dir / f"{key}_scatter_by_pass_rate.png"
         plot_scatter(datasets[key], rates, title, "Cosine similarity", path)
         written.append(path)
+    final_rows = []
+    for task in sorted(datasets["rq1_similarity"]):
+        residual = layer_means(datasets["rq1_similarity"][task], "cosine_similarity")
+        attention = layer_means(datasets["rq2_attention_post_o_proj_output"][task], "cosine_similarity")
+        if residual and attention:
+            final_rows.append((task, residual[max(residual)], attention[max(attention)], rates.get(task, math.nan)))
+    path = output_dir / "final_attention_vs_residual_by_pass_rate.png"
+    fig, ax = plt.subplots(figsize=(9, 7))
+    scatter = ax.scatter([r[1] for r in final_rows], [r[2] for r in final_rows], c=[r[3] for r in final_rows], cmap="viridis", s=45)
+    for task, x, y, _ in final_rows:
+        ax.annotate(task, (x, y), fontsize=7, alpha=.75)
+    ax.set(xlabel="Final residual-delta cosine", ylabel="Final post-o_proj similarity", title="Final attention vs residual alignment")
+    ax.grid(alpha=.25)
+    if final_rows:
+        fig.colorbar(scatter, ax=ax, label="Instruction pass rate")
+    fig.tight_layout(); fig.savefig(path, dpi=180); plt.close(fig); written.append(path)
     return written
 
 

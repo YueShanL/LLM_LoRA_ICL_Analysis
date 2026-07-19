@@ -152,7 +152,11 @@ def _accuracy(pred_ids: list[int], target_ids: list[int]) -> dict:
 
 
 def _attention_output_hooks(model, target_positions):
-    captures = []
+    import torch
+
+    pre_o_proj_captures = []
+    post_o_proj_captures = []
+    head_ablation_captures = []
     modules = [
         (name, module)
         for name, module in model.named_modules()
@@ -167,8 +171,10 @@ def _attention_output_hooks(model, target_positions):
         head_dim = getattr(module, "head_dim", None)
         if head_count is None or head_dim is None:
             raise RuntimeError(f"Cannot infer real head layout for {name}; refusing attention output fallback.")
+        current_per_head = None
 
         def save_input(_module, inputs):
+            nonlocal current_per_head
             value = inputs[0]
             if value.shape[-1] != int(head_count) * int(head_dim):
                 raise RuntimeError(
@@ -176,12 +182,47 @@ def _attention_output_hooks(model, target_positions):
                     f"expected {int(head_count) * int(head_dim)}."
                 )
             per_head = value[0, target_positions, :].view(len(target_positions), int(head_count), int(head_dim))
-            captures.append(per_head.permute(1, 0, 2).detach().cpu())
+            current_per_head = per_head
+            pre_o_proj_captures.append(per_head.permute(1, 0, 2).detach().cpu())
 
-        return save_input
+        def save_output(o_proj, _inputs, output):
+            post_output = output[0, target_positions, :]
+            post_o_proj_captures.append(post_output.detach().cpu())
+            if current_per_head is None or not hasattr(o_proj, "weight"):
+                return
+            impacts = []
+            full_norm = post_output.float().norm(dim=-1).clamp_min(1e-12)
+            for head in range(int(head_count)):
+                start = head * int(head_dim)
+                end = start + int(head_dim)
+                weight = o_proj.weight[:, start:end].to(device=post_output.device)
+                contribution = current_per_head[:, head, :].to(weight.dtype) @ weight.T
+                contribution = contribution.to(post_output.dtype)
+                contribution_norm = contribution.float().norm(dim=-1)
+                ablated = post_output - contribution
+                denom = full_norm * ablated.float().norm(dim=-1).clamp_min(1e-12)
+                cosine = (post_output.float() * ablated.float()).sum(dim=-1) / denom
+                impacts.append(
+                    torch.stack(
+                        [
+                            full_norm,
+                            contribution_norm,
+                            contribution_norm / full_norm,
+                            cosine,
+                        ],
+                        dim=-1,
+                    )
+                )
+            head_ablation_captures.append(torch.stack(impacts).detach().cpu())
 
-    handles = [module.o_proj.register_forward_pre_hook(hook_for(name, module)) for name, module in modules]
-    return captures, handles, len(modules)
+        return save_input, save_output
+
+    handles = []
+    for name, module in modules:
+        save_input, save_output = hook_for(name, module)
+        handles.append(module.o_proj.register_forward_pre_hook(save_input))
+        handles.append(module.o_proj.register_forward_hook(save_output))
+    return pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, handles, len(modules)
 
 
 def _stack_attention_outputs(torch, captures: list, expected_layers: int) -> object:
@@ -214,8 +255,8 @@ def _run_one(
     labels = torch.tensor([encoded["labels"]], dtype=torch.long, device=device)
     target_positions = torch.tensor(encoded["target_positions"], dtype=torch.long, device=device)
     prediction_positions = torch.tensor(encoded["prediction_positions"], dtype=torch.long, device=device)
-    attention_output_captures, handles, expected_attention_output_layers = (
-        _attention_output_hooks(model, target_positions) if collect_attention_outputs else ([], [], 0)
+    pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, handles, expected_attention_output_layers = (
+        _attention_output_hooks(model, target_positions) if collect_attention_outputs else ([], [], [], [], 0)
     )
 
     try:
@@ -252,14 +293,30 @@ def _run_one(
             "target_alignment": encoded["target_alignment"],
             "source_alignment": encoded["source_alignment"],
             "state_position_semantics": "hidden_states use target_positions; target_logits use prediction_positions",
-            "attention_output_semantics": "attention_outputs are pre-o_proj per-head outputs at target_positions",
+            "attention_output_semantics": (
+                "attention_outputs are pre-o_proj per-head outputs at target_positions; "
+                "attention_post_o_proj_outputs are post-o_proj attention block outputs at target_positions; "
+                "attention_head_ablation_impacts are scalar post-o_proj head removal impacts"
+            ),
             "target_logits": target_logits,
             "hidden_states": hidden_states,
             "attentions": attentions,
         }
     if collect_attention_outputs:
         tensor["attention_outputs"] = _stack_attention_outputs(
-            torch, attention_output_captures, expected_attention_output_layers
+            torch, pre_o_proj_captures, expected_attention_output_layers
+        )
+        tensor["attention_post_o_proj_outputs"] = _stack_attention_outputs(
+            torch, post_o_proj_captures, expected_attention_output_layers
+        )
+        tensor["attention_head_ablation_impact_names"] = [
+            "full_norm",
+            "head_contribution_norm",
+            "head_contribution_relative_norm",
+            "ablated_cosine_to_full",
+        ]
+        tensor["attention_head_ablation_impacts"] = _stack_attention_outputs(
+            torch, head_ablation_captures, expected_attention_output_layers
         )
     torch.save(tensor, tensor_path)
 

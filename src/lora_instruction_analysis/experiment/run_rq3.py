@@ -7,7 +7,8 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from lora_instruction_analysis.data.tasks import ValidationSelector, validator_name
+from lora_instruction_analysis.data.tasks import ValidationSelector, get_task, resolved_validator_name, validator_name
+from lora_instruction_analysis.model.collect import _dataset_file, _read_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
 from lora_instruction_analysis.model.patch import PatchConfig, run_activation_patching
 from lora_instruction_analysis.model.visualize import VisualizeConfig, visualize
@@ -19,7 +20,7 @@ DEFAULT_PATCH_PAIRS = (
     ("instruction_only", "lora_only"),
     ("base", "lora_only"),
 )
-DEFAULT_LAYERS = (1, 21, 27)
+DEFAULT_LAYERS = (1, 20, 26)
 RQ3_CONTROLS = (
     "unpatched",
     "base_to_target_patch",
@@ -88,10 +89,11 @@ def _read_run_config(run_dir: Path) -> dict:
 
 def _infer_config(args: argparse.Namespace) -> RQ3Config:
     run_config = _read_run_config(args.run_dir)
+    dataset_path = args.dataset_path or Path(run_config["dataset_dir"])
     return RQ3Config(
         run_dir=args.run_dir,
         model_name=args.model_name or run_config["model_name"],
-        dataset_path=args.dataset_path or Path(run_config["dataset_dir"]),
+        dataset_path=dataset_path,
         adapter_path=args.adapter_path or Path(run_config["adapter_dir"]),
         source_condition=args.source_condition,
         target_condition=args.target_condition,
@@ -99,7 +101,7 @@ def _infer_config(args: argparse.Namespace) -> RQ3Config:
         split=args.split,
         max_samples=args.max_samples,
         seed=args.seed if args.seed is not None else int(run_config.get("seed", 13)),
-        max_new_tokens=args.max_new_tokens,
+        max_new_tokens=args.max_new_tokens if args.max_new_tokens is not None else _default_max_new_tokens(dataset_path, args.split),
         patch_span=args.patch_span,
         dtype=args.dtype,
         device=args.device,
@@ -119,7 +121,7 @@ def _jsonable(config: RQ3Config) -> dict:
     data["resolved_output_dir"] = str(config.resolved_output_dir)
     data["resolved_plots_dir"] = str(config.resolved_plots_dir)
     data["comparison"] = f"teacher-forced and autoregressive block-output activation patching over {config.patch_span} span"
-    data["validator"] = validator_name(config.validator)
+    data["validator"] = _resolved_validator(config)
     data["result_status"] = "partial"
     data["status_reason"] = "RQ3 has controls, generation metrics, semantic task scoring, and shape checks; activation-site sweep is still pending."
     data["default_patch_pairs"] = [list(pair) for pair in DEFAULT_PATCH_PAIRS]
@@ -141,6 +143,7 @@ def _jsonable(config: RQ3Config) -> dict:
 
 
 def run_rq3(config: RQ3Config) -> None:
+    resolved_validator = _resolved_validator(config)
     config.run_dir.mkdir(parents=True, exist_ok=True)
     (config.run_dir / "rq3_config.json").write_text(
         json.dumps(_jsonable(config), indent=2, ensure_ascii=False),
@@ -183,7 +186,7 @@ def run_rq3(config: RQ3Config) -> None:
                 device=config.device,
                 prompt_format=config.prompt_format,
                 append_eos=config.append_eos,
-                validator=config.validator,
+                validator=resolved_validator,
             )
         )
     visualize(
@@ -199,6 +202,26 @@ def run_rq3(config: RQ3Config) -> None:
     )
 
 
+def _resolved_validator(config: RQ3Config) -> str:
+    path = _dataset_file(config.dataset_path, config.split)
+    if not path.exists():
+        return validator_name(config.validator)
+    task_ids = {row["task_id"] for row in _read_jsonl(path)}
+    if len(task_ids) != 1:
+        raise ValueError(f"RQ3 requires exactly one task_id, found {sorted(task_ids)}")
+    return resolved_validator_name(next(iter(task_ids)), config.validator)
+
+
+def _default_max_new_tokens(dataset_path: Path, split: str) -> int:
+    path = _dataset_file(dataset_path, split)
+    if not path.exists():
+        return 20
+    task_ids = {row["task_id"] for row in _read_jsonl(path)}
+    if len(task_ids) != 1:
+        raise ValueError(f"RQ3 requires exactly one task_id, found {sorted(task_ids)}")
+    return get_task(next(iter(task_ids))).max_generate_tokens or 20
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ3 activation patching for a LoRA run.")
     parser.add_argument("--run-dir", type=Path, required=True, help="LoRA run directory with config.json.")
@@ -211,7 +234,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--split", default="test")
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--seed", type=int)
-    parser.add_argument("--max-new-tokens", type=int, default=20)
+    parser.add_argument("--max-new-tokens", type=int)
     parser.add_argument("--patch-span", choices=("target", "text"), default="text")
     parser.add_argument("--dtype", default="auto")
     parser.add_argument("--device", default="auto")

@@ -18,10 +18,19 @@ ATTENTION_ALIGNMENT_STRATEGY = (
     "instruction prefix tokens are excluded."
 )
 ATTENTION_PATTERN_DEFINITION = (
-    "cosine/entropy/KL over aligned attention probabilities for the row's condition pair"
+    "cosine over raw aligned attention probabilities; entropy/KL over those probabilities renormalized on shared support"
 )
 ATTENTION_OUTPUT_DEFINITION = (
     "cosine over per-head attention outputs for the row's condition pair"
+)
+ATTENTION_POST_O_PROJ_OUTPUT_DEFINITION = (
+    "cosine over post-o_proj attention block outputs for the row's condition pair"
+)
+ATTENTION_OUTPUT_DELTA_DEFINITION = (
+    "cosine over condition-minus-base attention outputs for instruction_only and lora_only"
+)
+HEAD_ABLATION_DEFINITION = (
+    "post-o_proj representation impact from removing one head contribution before the residual writeback"
 )
 RQ3_CHART_SPECS = (
     ("teacher_forced", "loss", "Teacher-Forced Loss Mean By Layer"),
@@ -83,6 +92,11 @@ def _kl(torch, left, right) -> float:
     return float((left_safe * (left_safe.log() - right_safe.log())).sum())
 
 
+def _normalize_probs(torch, probs):
+    total = probs.float().sum().clamp_min(1e-12)
+    return probs.float() / total
+
+
 def _linear_cka(torch, left, right) -> float:
     left = left.float()
     right = right.float()
@@ -135,7 +149,7 @@ def _same_prefix_shape(name: str, *values) -> int:
     return counts[0]
 
 
-def _source_index_by_key(tensor: dict, seq_len: int) -> dict[str, int]:
+def _source_rows_by_key(tensor: dict, seq_len: int) -> dict[str, dict]:
     if "source_alignment" not in tensor:
         raise ValueError(
             f"Missing source_alignment in {tensor.get('sample_id', '<unknown>')} "
@@ -144,9 +158,42 @@ def _source_index_by_key(tensor: dict, seq_len: int) -> dict[str, int]:
     result = {}
     for row in tensor["source_alignment"]:
         position = int(row["position"])
-        if position < seq_len and row["span"] in {"input", "target"}:
-            result[row["alignment_key"]] = position
+        if position < seq_len:
+            result[row["alignment_key"]] = {**row, "position": position}
     return result
+
+
+def _source_index_by_key(tensor: dict, seq_len: int) -> dict[str, int]:
+    return {
+        key: row["position"]
+        for key, row in _source_rows_by_key(tensor, seq_len).items()
+        if row["span"] in {"input", "target"}
+    }
+
+
+def _attention_source_stats(left_rows: dict[str, dict], right_rows: dict[str, dict], token_index: int) -> dict:
+    shared = left_rows.keys() & right_rows.keys()
+    comparable = {
+        key
+        for key in shared
+        if left_rows[key]["span"] == right_rows[key]["span"]
+        and (
+            left_rows[key]["span"] == "input"
+            or (left_rows[key]["span"] == "target" and int(key.split(":", 2)[1]) <= token_index)
+        )
+    }
+    non_prompt_union = {
+        key
+        for key, row in {**left_rows, **right_rows}.items()
+        if row["span"] in {"input", "target"}
+    }
+    prompt_excluded = [row for row in [*left_rows.values(), *right_rows.values()] if row["span"] == "prompt"]
+    return {
+        "shared_input_tokens": sum(1 for key in comparable if left_rows[key]["span"] == "input"),
+        "shared_target_prefix_tokens": sum(1 for key in comparable if left_rows[key]["span"] == "target"),
+        "excluded_instruction_tokens": len(prompt_excluded),
+        "excluded_other_tokens": len(non_prompt_union - comparable),
+    }
 
 
 def _row_base(sample_id: str, tensor: dict, condition: str, mode: str, layer: int, token_index: int, alignment: dict) -> dict:
@@ -214,6 +261,74 @@ def _residual_rows(torch, run_dir: Path) -> list[dict]:
     return rows
 
 
+def _delta_subspace_summary(torch, run_dir: Path, top_k: int = 8) -> tuple[list[dict], list[dict]]:
+    """Summarize condition-minus-base residual geometry for one task."""
+    metrics = _metrics_by_key(run_dir)
+    sample_ids = sorted({
+        sample_id for sample_id, _ in metrics
+        if all((sample_id, condition) in metrics for condition in ("base", "instruction_only", "lora_only"))
+    })
+    by_layer: dict[int, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    final_points = []
+    for sample_id in sample_ids:
+        tensors = {condition: _load_tensor(torch, metrics[(sample_id, condition)], run_dir) for condition in ("base", "instruction_only", "lora_only")}
+        layer_count = _same_prefix_shape("hidden_states", *(tensors[c]["hidden_states"] for c in tensors))
+        for layer in range(layer_count):
+            for condition in ("instruction_only", "lora_only"):
+                delta = tensors[condition]["hidden_states"][layer] - tensors["base"]["hidden_states"][layer]
+                by_layer[layer][condition].append(delta)
+                if layer == layer_count - 1:
+                    correct = metrics[(sample_id, condition)].get("sequence_accuracy", "")
+                    final_points.extend((sample_id, tensors[condition].get("task_id", ""), condition, correct, row) for row in delta)
+
+    summary = []
+    for layer, conditions in sorted(by_layer.items()):
+        left, right = (torch.cat(conditions[c], dim=0).float() for c in ("instruction_only", "lora_only"))
+        left, right = left - left.mean(0), right - right.mean(0)
+        k = min(top_k, left.shape[0], right.shape[0], left.shape[1], right.shape[1])
+        if not k:
+            continue
+        left_basis = torch.linalg.svd(left, full_matrices=False).Vh[:k].T
+        right_basis = torch.linalg.svd(right, full_matrices=False).Vh[:k].T
+        cosines = torch.linalg.svdvals(left_basis.T @ right_basis)
+        summary.append({"layer": layer, "top_k": k, "subspace_cosine_mean": cosines.mean().item(), "principal_angle_degrees_mean": torch.rad2deg(torch.acos(cosines.clamp(-1, 1))).mean().item()})
+
+    projected = []
+    if final_points:
+        matrix = torch.stack([point[4].float() for point in final_points])
+        centered = matrix - matrix.mean(0)
+        coords = centered @ torch.linalg.svd(centered, full_matrices=False).Vh[:2].T
+        for (sample_id, task_id, condition, correct, _), xy in zip(final_points, coords):
+            projected.append({"sample_id": sample_id, "task_id": task_id, "condition": condition, "semantic_correct": correct, "pc1": xy[0].item(), "pc2": xy[1].item() if xy.numel() > 1 else 0.0})
+    return summary, projected
+
+
+def _write_delta_subspace_plots(torch, run_dir: Path, output_dir: Path) -> list[Path]:
+    summary, points = _delta_subspace_summary(torch, run_dir)
+    _write_plain_csv(output_dir / "delta_subspace_summary.csv", summary)
+    _write_plain_csv(output_dir / "delta_final_layer_pca.csv", points)
+    if not summary or not points:
+        return []
+    import matplotlib
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+    paths = []
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot([r["layer"] for r in summary], [r["subspace_cosine_mean"] for r in summary], marker="o")
+    ax.set(xlabel="Layer", ylabel="Mean top-k subspace cosine", title="Instruction vs LoRA residual-delta subspace")
+    ax.grid(alpha=.25); fig.tight_layout()
+    paths.append(output_dir / "delta_subspace_by_layer.png"); fig.savefig(paths[-1], dpi=180); plt.close(fig)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for condition, color in (("instruction_only", "tab:blue"), ("lora_only", "tab:orange")):
+        for correct, marker in ((1.0, "o"), (0.0, "x")):
+            rows = [r for r in points if r["condition"] == condition and r["semantic_correct"] != "" and float(r["semantic_correct"]) == correct]
+            if rows:
+                ax.scatter([r["pc1"] for r in rows], [r["pc2"] for r in rows], label=f"{condition}, correct={int(correct)}", marker=marker, color=color, alpha=.65)
+    ax.set(xlabel="PC1", ylabel="PC2", title="Final-layer residual deltas"); ax.legend(); ax.grid(alpha=.2); fig.tight_layout()
+    paths.append(output_dir / "delta_final_layer_pca.png"); fig.savefig(paths[-1], dpi=180); plt.close(fig)
+    return paths
+
+
 def _attention_rows(torch, run_dir: Path) -> list[dict]:
     metrics = _metrics_by_key(run_dir)
     sample_ids = sorted(
@@ -239,8 +354,18 @@ def _attention_rows(torch, run_dir: Path) -> list[dict]:
             ("lora_only_vs_base", lora, lora_attention, base, base_attention),
         ]
         for condition, left_tensor, left_attention, right_tensor, right_attention in pairs:
-            left_sources = _source_index_by_key(left_tensor, left_attention.shape[3])
-            right_sources = _source_index_by_key(right_tensor, right_attention.shape[3])
+            left_source_rows = _source_rows_by_key(left_tensor, left_attention.shape[3])
+            right_source_rows = _source_rows_by_key(right_tensor, right_attention.shape[3])
+            left_sources = {
+                key: row["position"]
+                for key, row in left_source_rows.items()
+                if row["span"] in {"input", "target"}
+            }
+            right_sources = {
+                key: row["position"]
+                for key, row in right_source_rows.items()
+                if row["span"] in {"input", "target"}
+            }
             for layer in range(layer_count):
                 for head in range(head_count):
                     for token_index, target in enumerate(alignment):
@@ -253,6 +378,8 @@ def _attention_rows(torch, run_dir: Path) -> list[dict]:
                             raise ValueError(f"No comparable attention source keys for {sample_id} token {token_index}.")
                         left = left_attention[layer, head, token_index, [left_sources[key] for key in keys]]
                         right = right_attention[layer, head, token_index, [right_sources[key] for key in keys]]
+                        left_distribution = _normalize_probs(torch, left)
+                        right_distribution = _normalize_probs(torch, right)
                         row = _row_base(sample_id, left_tensor, condition, "attention_pattern", layer, token_index, target)
                         row.update(
                             {
@@ -261,10 +388,13 @@ def _attention_rows(torch, run_dir: Path) -> list[dict]:
                                 "metric_definition": ATTENTION_PATTERN_DEFINITION,
                                 "alignment_strategy": ATTENTION_ALIGNMENT_STRATEGY,
                                 "cosine_similarity": _cosine(torch, left, right),
-                                "left_entropy": _entropy(torch, left),
-                                "right_entropy": _entropy(torch, right),
-                                "kl_left_to_right": _kl(torch, left, right),
-                                "kl_right_to_left": _kl(torch, right, left),
+                                "left_shared_attention_mass": float(left.float().sum()),
+                                "right_shared_attention_mass": float(right.float().sum()),
+                                "left_entropy": _entropy(torch, left_distribution),
+                                "right_entropy": _entropy(torch, right_distribution),
+                                "kl_left_to_right": _kl(torch, left_distribution, right_distribution),
+                                "kl_right_to_left": _kl(torch, right_distribution, left_distribution),
+                                **_attention_source_stats(left_source_rows, right_source_rows, token_index),
                             }
                         )
                         rows.append(row)
@@ -309,6 +439,148 @@ def _attention_output_rows(torch, run_dir: Path) -> list[dict]:
                             right_outputs[layer, head, token_index],
                         )
                         rows.append(row)
+    return rows
+
+
+def _attention_post_o_proj_output_rows(torch, run_dir: Path) -> list[dict]:
+    metrics = _metrics_by_key(run_dir)
+    sample_ids = sorted(
+        sample_id
+        for sample_id in {sample_id for sample_id, _ in metrics}
+        if all((sample_id, condition) in metrics for condition in ("base", "instruction_only", "lora_only"))
+    )
+    rows = []
+    for sample_id in sample_ids:
+        base = _load_tensor(torch, metrics[(sample_id, "base")], run_dir)
+        instruction = _load_tensor(torch, metrics[(sample_id, "instruction_only")], run_dir)
+        lora = _load_tensor(torch, metrics[(sample_id, "lora_only")], run_dir)
+        base_outputs = base["attention_post_o_proj_outputs"]
+        instruction_outputs = instruction["attention_post_o_proj_outputs"]
+        lora_outputs = lora["attention_post_o_proj_outputs"]
+        alignment = _same_target_alignment(base, instruction, lora)
+        layer_count = _same_prefix_shape(
+            "attention_post_o_proj_outputs", base_outputs, instruction_outputs, lora_outputs
+        )
+        pairs = [
+            ("instruction_only_vs_lora_only", instruction, instruction_outputs, lora_outputs),
+            ("lora_only_vs_base", lora, lora_outputs, base_outputs),
+        ]
+        for condition, left_tensor, left_outputs, right_outputs in pairs:
+            for layer in range(layer_count):
+                for token_index, target in enumerate(alignment):
+                    row = _row_base(
+                        sample_id,
+                        left_tensor,
+                        condition,
+                        "attention_post_o_proj_output",
+                        layer,
+                        token_index,
+                        target,
+                    )
+                    row["metric_definition"] = ATTENTION_POST_O_PROJ_OUTPUT_DEFINITION
+                    row["alignment_strategy"] = "Target tokens are matched by target_alignment; source keys are not decomposed."
+                    row["cosine_similarity"] = _cosine(
+                        torch,
+                        left_outputs[layer, token_index],
+                        right_outputs[layer, token_index],
+                    )
+                    rows.append(row)
+    return rows
+
+
+def _attention_output_delta_rows(
+    torch,
+    run_dir: Path,
+    *,
+    tensor_key: str,
+    mode: str,
+    metric_definition: str,
+) -> list[dict]:
+    metrics = _metrics_by_key(run_dir)
+    sample_ids = sorted(
+        sample_id
+        for sample_id in {sample_id for sample_id, _ in metrics}
+        if all((sample_id, condition) in metrics for condition in ("base", "instruction_only", "lora_only"))
+    )
+    rows = []
+    for sample_id in sample_ids:
+        base = _load_tensor(torch, metrics[(sample_id, "base")], run_dir)
+        instruction = _load_tensor(torch, metrics[(sample_id, "instruction_only")], run_dir)
+        lora = _load_tensor(torch, metrics[(sample_id, "lora_only")], run_dir)
+        base_outputs = base[tensor_key]
+        instruction_outputs = instruction[tensor_key]
+        lora_outputs = lora[tensor_key]
+        alignment = _same_target_alignment(base, instruction, lora)
+        layer_count = _same_prefix_shape(tensor_key, base_outputs, instruction_outputs, lora_outputs)
+        has_heads = base_outputs.ndim == 4
+        if has_heads and len({base_outputs.shape[1], instruction_outputs.shape[1], lora_outputs.shape[1]}) != 1:
+            raise ValueError(f"{tensor_key} head count mismatch for {sample_id}.")
+        for layer in range(layer_count):
+            head_range = range(instruction_outputs.shape[1]) if has_heads else (None,)
+            for head in head_range:
+                for token_index, target in enumerate(alignment):
+                    left = (
+                        instruction_outputs[layer, head, token_index] - base_outputs[layer, head, token_index]
+                        if has_heads
+                        else instruction_outputs[layer, token_index] - base_outputs[layer, token_index]
+                    )
+                    right = (
+                        lora_outputs[layer, head, token_index] - base_outputs[layer, head, token_index]
+                        if has_heads
+                        else lora_outputs[layer, token_index] - base_outputs[layer, token_index]
+                    )
+                    row = _row_base(
+                        sample_id,
+                        instruction,
+                        "instruction_delta_vs_lora_delta",
+                        mode,
+                        layer,
+                        token_index,
+                        target,
+                    )
+                    if head is not None:
+                        row["head"] = head
+                    row["metric_definition"] = metric_definition
+                    row["alignment_strategy"] = "Target tokens are matched by target_alignment; source keys are not decomposed."
+                    row["cosine_similarity"] = _cosine(torch, left, right)
+                    rows.append(row)
+    return rows
+
+
+def _attention_head_ablation_rows(torch, run_dir: Path) -> list[dict]:
+    metrics = _metrics_by_key(run_dir)
+    rows = []
+    for sample_id, condition in sorted(metrics):
+        tensor = _load_tensor(torch, metrics[(sample_id, condition)], run_dir)
+        if "attention_head_ablation_impacts" not in tensor:
+            continue
+        impacts = tensor["attention_head_ablation_impacts"]
+        names = list(tensor["attention_head_ablation_impact_names"])
+        alignment = _target_alignment(tensor)
+        layer_count = impacts.shape[0]
+        head_count = impacts.shape[1]
+        for layer in range(layer_count):
+            for head in range(head_count):
+                for token_index, target in enumerate(alignment):
+                    values = {
+                        name: float(impacts[layer, head, token_index, index])
+                        for index, name in enumerate(names)
+                    }
+                    row = _row_base(
+                        sample_id,
+                        tensor,
+                        condition,
+                        "attention_head_ablation_impact",
+                        layer,
+                        token_index,
+                        target,
+                    )
+                    row["head"] = head
+                    row["metric_definition"] = HEAD_ABLATION_DEFINITION
+                    row["alignment_strategy"] = "Target tokens are matched by target_alignment; source keys are not decomposed."
+                    row["cosine_similarity"] = values["ablated_cosine_to_full"]
+                    row.update(values)
+                    rows.append(row)
     return rows
 
 
@@ -827,6 +1099,133 @@ def _summary_table(title: str, rows: list[dict], fields: list[str]) -> str:
     return f"<h2>{html.escape(title)}</h2><table><thead><tr>{header}</tr></thead><tbody>{''.join(body)}</tbody></table>"
 
 
+def _rq2_line_matplotlib_chart(rows: list[dict], output_dir: Path, filename: str, title: str) -> Path | None:
+    grouped: dict[tuple[str, int], list[float]] = defaultdict(list)
+    for row in rows:
+        grouped[(str(row["condition"]), int(row["layer"]))].append(float(row["cosine_similarity"]))
+    if not grouped:
+        return None
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    path = output_dir / filename
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for condition in sorted({condition for condition, _ in grouped}):
+        points = sorted(
+            (layer, mean(values))
+            for (cond, layer), values in grouped.items()
+            if cond == condition
+        )
+        ax.plot(
+            [layer for layer, _ in points],
+            [value for _, value in points],
+            marker="o",
+            linewidth=1.8,
+            label=condition,
+        )
+    ax.set_title(title)
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Mean cosine similarity")
+    ax.grid(axis="y", alpha=0.35)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+    return path
+
+
+def _rq2_head_ablation_heatmap(rows: list[dict], output_dir: Path) -> Path | None:
+    grouped: dict[tuple[str, int, int], list[float]] = defaultdict(list)
+    for row in rows:
+        if "head" not in row:
+            continue
+        grouped[(str(row["condition"]), int(row["layer"]), int(row["head"]))].append(
+            float(row["head_contribution_relative_norm"])
+        )
+    if not grouped:
+        return None
+
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+
+    conditions = sorted({condition for condition, _, _ in grouped})
+    layers = sorted({layer for _, layer, _ in grouped})
+    heads = sorted({head for _, _, head in grouped})
+    fig, axes = plt.subplots(
+        1,
+        len(conditions),
+        figsize=(max(6, 4 * len(conditions)), max(4, len(layers) * 0.22)),
+        squeeze=False,
+    )
+    images = []
+    for ax, condition in zip(axes[0], conditions):
+        matrix = [
+            [
+                mean(grouped[(condition, layer, head)]) if (condition, layer, head) in grouped else float("nan")
+                for head in heads
+            ]
+            for layer in layers
+        ]
+        image = ax.imshow(matrix, aspect="auto", interpolation="nearest", cmap="viridis")
+        images.append(image)
+        ax.set_title(condition)
+        ax.set_xlabel("Head")
+        ax.set_ylabel("Layer")
+        ax.set_xticks(range(len(heads)))
+        ax.set_xticklabels(heads, rotation=90 if len(heads) > 16 else 0, fontsize=7)
+        tick_step = max(1, len(layers) // 12)
+        y_ticks = list(range(0, len(layers), tick_step))
+        ax.set_yticks(y_ticks)
+        ax.set_yticklabels([layers[index] for index in y_ticks], fontsize=8)
+    fig.colorbar(images[-1], ax=list(axes[0]), shrink=0.82, label="Mean relative contribution norm")
+    fig.suptitle("Attention Head Ablation Impact")
+    path = output_dir / "head_ablation_heatmap.png"
+    fig.savefig(path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def _rq2_matplotlib_charts(rows: list[dict], output_dir: Path, mode: str) -> list[Path]:
+    specs = {
+        "attention_output": ("attention_output_layer_mean.png", "Pre-o_proj Attention Output Similarity"),
+        "attention_post_o_proj_output": (
+            "attention_post_o_proj_output_layer_mean.png",
+            "Post-o_proj Attention Output Similarity",
+        ),
+        "attention_output_delta": (
+            "attention_output_delta_layer_mean.png",
+            "Pre-o_proj Attention Output Delta Similarity",
+        ),
+        "attention_post_o_proj_output_delta": (
+            "attention_post_o_proj_output_delta_layer_mean.png",
+            "Post-o_proj Attention Output Delta Similarity",
+        ),
+    }
+    if mode == "attention_head_ablation":
+        path = _rq2_head_ablation_heatmap(rows, output_dir)
+        return [path] if path else []
+    if mode not in specs:
+        return []
+    filename, title = specs[mode]
+    path = _rq2_line_matplotlib_chart(rows, output_dir, filename, title)
+    return [path] if path else []
+
+
+def _chart_images(paths: list[Path]) -> str:
+    if not paths:
+        return ""
+    images = "\n".join(
+        f'<img src="{html.escape(path.name)}" alt="{html.escape(path.stem)}" class="matplot-chart">'
+        for path in paths
+    )
+    return f"<h2>Matplotlib Charts</h2>\n{images}"
+
+
 def _run_model_name(run_dir: Path | None) -> str | None:
     if run_dir is None:
         return None
@@ -901,6 +1300,7 @@ def _write_html(
     logit_box_rows: list[dict],
     quality_rows: list[dict],
     base_rows: list[dict] | None = None,
+    chart_paths: list[Path] | None = None,
 ) -> None:
     grouped: dict[tuple[str, int, int], list[float]] = defaultdict(list)
     for row in rows:
@@ -912,6 +1312,22 @@ def _write_html(
         "attention": (ATTENTION_PATTERN_DEFINITION, ATTENTION_ALIGNMENT_STRATEGY),
         "attention_output": (
             ATTENTION_OUTPUT_DEFINITION,
+            "Target tokens are matched by target_alignment; source keys are not decomposed.",
+        ),
+        "attention_post_o_proj_output": (
+            ATTENTION_POST_O_PROJ_OUTPUT_DEFINITION,
+            "Target tokens are matched by target_alignment; source keys are not decomposed.",
+        ),
+        "attention_output_delta": (
+            ATTENTION_OUTPUT_DELTA_DEFINITION,
+            "Target tokens are matched by target_alignment; source keys are not decomposed.",
+        ),
+        "attention_post_o_proj_output_delta": (
+            ATTENTION_OUTPUT_DELTA_DEFINITION,
+            "Target tokens are matched by target_alignment; source keys are not decomposed.",
+        ),
+        "attention_head_ablation": (
+            HEAD_ABLATION_DEFINITION,
             "Target tokens are matched by target_alignment; source keys are not decomposed.",
         ),
     }.get(config.mode)
@@ -939,6 +1355,7 @@ table {{ border-collapse: collapse; margin: 12px 0 28px; }}
 th, td {{ border: 1px solid #d7d7d7; padding: 6px 8px; text-align: right; font-size: 12px; }}
 th {{ background: #f4f4f4; font-weight: 600; }}
 .meta {{ color: #555; line-height: 1.5; }}
+.matplot-chart {{ display: block; max-width: 100%; margin: 12px 0 28px; }}
 </style>
 <h1>Token State Similarity</h1>
 <div class="meta">
@@ -948,6 +1365,7 @@ right: {html.escape(config.right_model)} ({html.escape(str(config.right_run or "
 mode: {html.escape(config.mode)}; rows: {len(rows)}
 {('<br>metric: ' + html.escape(notes[0]) + '<br>alignment: ' + html.escape(notes[1])) if notes else ''}
 </div>
+{_chart_images(chart_paths or [])}
 {_layer_distribution_chart(layer_distribution_rows)}
 {_metric_box_chart(cka_box_rows, "CKA Similarity Distribution")}
 {_metric_box_chart(logit_box_rows, "Logit Distribution Cosine Distribution")}
@@ -1490,6 +1908,52 @@ def visualize(config: VisualizeConfig) -> None:
         base_rows = []
         if not rows:
             raise ValueError("Attention output mode requires tensors collected with attention_outputs.")
+    elif config.mode == "attention_post_o_proj_output":
+        if config.run is None:
+            raise ValueError("--run is required for attention_post_o_proj_output mode.")
+        rows = _attention_post_o_proj_output_rows(torch, config.run)
+        base_rows = []
+        if not rows:
+            raise ValueError(
+                "Post-o_proj attention output mode requires tensors collected with attention_post_o_proj_outputs."
+            )
+    elif config.mode == "attention_output_delta":
+        if config.run is None:
+            raise ValueError("--run is required for attention_output_delta mode.")
+        rows = _attention_output_delta_rows(
+            torch,
+            config.run,
+            tensor_key="attention_outputs",
+            mode="attention_output_delta",
+            metric_definition=ATTENTION_OUTPUT_DELTA_DEFINITION,
+        )
+        base_rows = []
+        if not rows:
+            raise ValueError("Attention output delta mode requires tensors collected with attention_outputs.")
+    elif config.mode == "attention_post_o_proj_output_delta":
+        if config.run is None:
+            raise ValueError("--run is required for attention_post_o_proj_output_delta mode.")
+        rows = _attention_output_delta_rows(
+            torch,
+            config.run,
+            tensor_key="attention_post_o_proj_outputs",
+            mode="attention_post_o_proj_output_delta",
+            metric_definition=ATTENTION_OUTPUT_DELTA_DEFINITION,
+        )
+        base_rows = []
+        if not rows:
+            raise ValueError(
+                "Post-o_proj attention output delta mode requires tensors collected with attention_post_o_proj_outputs."
+            )
+    elif config.mode == "attention_head_ablation":
+        if config.run is None:
+            raise ValueError("--run is required for attention_head_ablation mode.")
+        rows = _attention_head_ablation_rows(torch, config.run)
+        base_rows = []
+        if not rows:
+            raise ValueError(
+                "Attention head ablation mode requires tensors collected with attention_head_ablation_impacts."
+            )
     elif config.mode == "delta":
         rows = _delta_rows(torch, config)
         base_rows = []
@@ -1508,6 +1972,9 @@ def visualize(config: VisualizeConfig) -> None:
     if config.right_run is not None:
         quality_rows.extend(_quality_rows(config.right_run, "right"))
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    chart_paths = _rq2_matplotlib_charts(rows, config.output_dir, config.mode)
+    if config.mode == "residual" and config.run is not None:
+        chart_paths.extend(_write_delta_subspace_plots(torch, config.run, config.output_dir))
     _write_csv(config.output_dir / "token_similarity.csv", rows)
     if base_rows:
         _write_csv(config.output_dir / "base_comparison_similarity.csv", base_rows)
@@ -1526,6 +1993,7 @@ def visualize(config: VisualizeConfig) -> None:
         logit_box_rows,
         quality_rows,
         base_rows,
+        chart_paths,
     )
 
 
@@ -1537,7 +2005,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--left-model", default=DEFAULT_MODEL)
     parser.add_argument("--right-model", default=DEFAULT_MODEL)
-    parser.add_argument("--mode", choices=("residual", "attention", "attention_output", "state", "delta", "patch_loss"), default=None)
+    parser.add_argument(
+        "--mode",
+        choices=(
+            "residual",
+            "attention",
+            "attention_output",
+            "attention_post_o_proj_output",
+            "attention_output_delta",
+            "attention_post_o_proj_output_delta",
+            "attention_head_ablation",
+            "state",
+            "delta",
+            "patch_loss",
+        ),
+        default=None,
+    )
     parser.add_argument("--condition", action="append", choices=("base", "instruction_only", "lora_only"), dest="conditions")
     return parser.parse_args()
 

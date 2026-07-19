@@ -40,8 +40,28 @@ class RQ2RunnerTests(unittest.TestCase):
                 run_rq2.run_rq2(config)
 
             self.assertTrue(seen["collect_attention_outputs"])
-            self.assertEqual(seen["modes"], ["attention", "attention_output"])
-            self.assertEqual(seen["output_dirs"], [root / "plots" / "rq21" / "attention_probs", root / "plots" / "rq21" / "attention_outputs"])
+            self.assertEqual(
+                seen["modes"],
+                [
+                    "attention",
+                    "attention_output",
+                    "attention_post_o_proj_output",
+                    "attention_output_delta",
+                    "attention_post_o_proj_output_delta",
+                    "attention_head_ablation",
+                ],
+            )
+            self.assertEqual(
+                seen["output_dirs"],
+                [
+                    root / "plots" / "rq21" / "attention_probs",
+                    root / "plots" / "rq21" / "attention_outputs",
+                    root / "plots" / "rq21" / "attention_post_o_proj_outputs",
+                    root / "plots" / "rq21" / "attention_output_deltas",
+                    root / "plots" / "rq21" / "attention_post_o_proj_output_deltas",
+                    root / "plots" / "rq21" / "attention_head_ablation",
+                ],
+            )
             self.assertTrue((root / "rq21_config.json").exists())
 
 

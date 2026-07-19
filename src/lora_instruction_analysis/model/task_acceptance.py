@@ -8,7 +8,14 @@ import json
 from pathlib import Path
 
 from lora_instruction_analysis.data.builder import DatasetBuildConfig, build_dataset, write_dataset
-from lora_instruction_analysis.data.tasks import ValidationSelector, list_tasks, task_default_prompt, validator_name
+from lora_instruction_analysis.data.tasks import (
+    PROMPT_VARIANT_NAMES,
+    ValidationSelector,
+    get_task,
+    instruction_prompt_variants,
+    list_tasks,
+    resolved_validator_name,
+)
 from lora_instruction_analysis.model.collect import _dataset_file, _read_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
 from lora_instruction_analysis.model.prompt_eval import PromptEvalConfig, evaluate_prompt
@@ -46,17 +53,19 @@ def passes_gate(instruction_summary: dict, no_instruction_summary: dict, config:
     )
 
 
-def _default_instruction_variants(instruction: str | None) -> list[str | None]:
-    return [instruction]
-
-
-def _dataset_instruction(dataset_path: Path, split: str) -> str | None:
-    rows = _read_jsonl(_dataset_file(dataset_path, split))
-    return rows[0].get("instruction_text") if rows else None
+def _default_instruction_variants(instruction: str) -> list[str]:
+    return instruction_prompt_variants(instruction)
 
 
 def validate_task(config: TaskAcceptanceConfig) -> dict:
     config.output_dir.mkdir(parents=True, exist_ok=True)
+    records = _read_jsonl(_dataset_file(config.dataset_path, config.split))
+    task_ids = {record["task_id"] for record in records}
+    if len(task_ids) != 1:
+        raise ValueError(f"Task acceptance requires exactly one task_id, found {sorted(task_ids)}")
+    task_id = next(iter(task_ids))
+    resolved_validator = resolved_validator_name(task_id, config.validator)
+    base_instruction = config.instruction or get_task(task_id).natural_language_instruction
     common = {
         "model_name": config.model_name,
         "dataset_path": config.dataset_path,
@@ -71,9 +80,9 @@ def validate_task(config: TaskAcceptanceConfig) -> dict:
         "device": config.device,
         "prompt_format": config.prompt_format,
         "append_eos": config.append_eos,
-        "validator": config.validator,
+        "validator": resolved_validator,
     }
-    instruction_variants = _default_instruction_variants(config.instruction or _dataset_instruction(config.dataset_path, config.split))
+    instruction_variants = _default_instruction_variants(base_instruction)
     instruction_summaries = []
     for index, instruction in enumerate(instruction_variants, start=1):
         instruction_summaries.append(
@@ -93,11 +102,21 @@ def validate_task(config: TaskAcceptanceConfig) -> dict:
             include_instruction=False,
         )
     )
-    accepted = any(passes_gate(summary, no_instruction_summary, config) for summary in instruction_summaries)
+    scores = [_generation_accuracy(run) for run in instruction_summaries]
+    best_index = max(range(len(scores)), key=scores.__getitem__)
+    accepted = passes_gate(instruction_summaries[best_index], no_instruction_summary, config)
+    manifest_path = config.dataset_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
     summary = {
         "accepted": accepted,
         "instruction_only": [run["autoregressive"] for run in instruction_summaries],
         "no_instruction": no_instruction_summary["autoregressive"],
+        "selected_prompt": {
+            "index": best_index + 1,
+            "name": PROMPT_VARIANT_NAMES[best_index],
+            "instruction": instruction_variants[best_index],
+            "mean_task_semantic_correct": scores[best_index],
+        },
         "teacher_forced_reference": {
             "instruction_only": [run["teacher_forced"] for run in instruction_summaries],
             "no_instruction": no_instruction_summary["teacher_forced"],
@@ -107,7 +126,9 @@ def validate_task(config: TaskAcceptanceConfig) -> dict:
             "dataset_path": str(config.dataset_path),
             "output_dir": str(config.output_dir),
             "instruction_variants": instruction_variants,
-            "validator": validator_name(config.validator),
+            "task_id": task_id,
+            "validator": resolved_validator,
+            "data_route": manifest.get("data_route"),
         },
     }
     (config.output_dir / "acceptance_summary.json").write_text(
@@ -122,6 +143,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--dataset-path", type=Path)
     parser.add_argument("--task", choices=[task.task_id for task in list_tasks()], help="Build a quick test split from this registered transformation task.")
+    parser.add_argument("--source", default="wikitext", help="Single declared data route used with --task.")
+    parser.add_argument("--max-source-rows", type=int, default=5000)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--instruction", help="Instruction prompt. Defaults to each row's instruction_text.")
     parser.add_argument("--split", default="test")
@@ -150,13 +173,17 @@ def _dataset_path(args: argparse.Namespace) -> Path:
     size = args.max_samples or 16
     config = DatasetBuildConfig(
         task_id=args.task,
+        source_id=args.source,
         output_dir=dataset_path,
         train_size=0,
         validation_size=0,
         test_size=size,
-        max_source_rows=0,
-        allow_builtin_fallback=True,
+        max_source_rows=args.max_source_rows,
+        write_csv=False,
         write_hf_dataset=False,
+        model_name=args.model_name,
+        tokenizer_name=args.model_name,
+        prompt_template=f"{args.prompt_format}_target_v1",
     )
     splits = build_dataset(config)
     write_dataset(config, splits)
@@ -171,7 +198,7 @@ def main() -> None:
             model_name=args.model_name,
             dataset_path=dataset_path,
             output_dir=args.output_dir,
-            instruction=args.instruction or (task_default_prompt(args.task) if args.task else None),
+            instruction=args.instruction,
             split=args.split,
             max_samples=args.max_samples,
             seed=args.seed,

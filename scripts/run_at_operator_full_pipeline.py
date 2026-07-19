@@ -34,7 +34,7 @@ DEVICE = "cuda"
 DTYPE = "auto"
 PROMPT_FORMAT = "chat_template"
 GENERATION_EXTRA_TOKENS = 128
-RQ3_MAX_NEW_TOKENS = 100
+RQ3_MAX_NEW_TOKENS = 128
 
 # Full test split is 100. Lower this for a quicker smoke run before the full run.
 MAX_SAMPLES: int | None = 16

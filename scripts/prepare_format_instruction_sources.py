@@ -176,8 +176,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download format-instruction source prompts.")
     parser.add_argument("--output-dir", type=Path, default=Path("data/format_instruction_sources"))
     parser.add_argument("--dataset", choices=sorted(DATASETS), action="append")
-    parser.add_argument("--max-source-rows", type=int, default=1000)
-    parser.add_argument("--max-records", type=int, default=1000)
+    parser.add_argument("--max-source-rows", type=int, default=2000)
+    parser.add_argument("--max-records", type=int, default=8000)
     parser.add_argument("--max-question-words", type=int, default=80)
     parser.add_argument(
         "--category",
@@ -237,7 +237,7 @@ def main() -> None:
                     kept += len(normalized)
                 if len(records) >= args.max_records:
                     break
-        except Exception as exc:  # record unavailable datasets without fallback.
+        except Exception as exc:  # Every declared route is audited independently.
             error = f"{type(exc).__name__}: {exc}"
         status.append({"dataset": dataset_name, "loaded": loaded, "kept": kept, "error": error})
         if len(records) >= args.max_records:

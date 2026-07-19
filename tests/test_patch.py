@@ -3,12 +3,24 @@ import importlib
 import json
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lora_instruction_analysis.model import patch
 from lora_instruction_analysis.model import visualize
+
+
+class CharTokenizer:
+    pad_token_id = 0
+    eos_token_id = 3
+
+    def __call__(self, text, add_special_tokens=False):
+        return SimpleNamespace(input_ids=[ord(char) for char in text])
+
+    def decode(self, token_ids, skip_special_tokens=True):
+        return "".join(chr(token_id) for token_id in token_ids if token_id > 3)
 
 
 class PatchTests(unittest.TestCase):
@@ -46,6 +58,30 @@ class PatchTests(unittest.TestCase):
 
         self.assertTrue(torch.equal(patched[0, 0, :], patch_rows[0]))
         self.assertTrue(torch.equal(patched[0, 1, :], patch_rows[1]))
+
+    def test_text_patch_alignment_left_pads_shorter_prompt(self):
+        record = {
+            "sample_id": "s1",
+            "task_id": "task",
+            "input_text": "ab",
+            "instruction_text": "copy",
+            "target_text": "xy",
+        }
+        tokenizer = CharTokenizer()
+        source = patch._encode(tokenizer, record, include_instruction=True)
+        target = patch._encode(tokenizer, record, include_instruction=False)
+
+        padded_target = patch._align_encoded_to_input_start(
+            target,
+            patch._input_start(source),
+            patch._pad_token_id(tokenizer),
+        )
+
+        self.assertEqual(patch._input_start(source), patch._input_start(padded_target))
+        self.assertEqual(
+            [row["position"] for row in source["source_alignment"] if row["span"] == "input"],
+            [row["position"] for row in padded_target["source_alignment"] if row["span"] == "input"],
+        )
 
     def test_patch_loss_visualization_rejects_legacy_generation_targets(self):
         with tempfile.TemporaryDirectory() as tmp:

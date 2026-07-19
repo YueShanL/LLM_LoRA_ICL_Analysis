@@ -11,8 +11,11 @@ from lora_instruction_analysis.model.collect import CONDITIONS, CollectConfig, c
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
 from lora_instruction_analysis.model.visualize import (
     ATTENTION_ALIGNMENT_STRATEGY,
+    ATTENTION_OUTPUT_DELTA_DEFINITION,
     ATTENTION_OUTPUT_DEFINITION,
     ATTENTION_PATTERN_DEFINITION,
+    ATTENTION_POST_O_PROJ_OUTPUT_DEFINITION,
+    HEAD_ABLATION_DEFINITION,
     VisualizeConfig,
     visualize,
 )
@@ -78,7 +81,11 @@ def _jsonable(config: RQ2Config) -> dict:
     data["resolved_plots_dir"] = str(config.resolved_plots_dir)
     data["conditions"] = list(CONDITIONS)
     data["comparison"] = (
-        f"{ATTENTION_PATTERN_DEFINITION}; {ATTENTION_OUTPUT_DEFINITION}"
+        (
+            f"{ATTENTION_PATTERN_DEFINITION}; {ATTENTION_OUTPUT_DEFINITION}; "
+            f"{ATTENTION_POST_O_PROJ_OUTPUT_DEFINITION}; {ATTENTION_OUTPUT_DELTA_DEFINITION}; "
+            f"{HEAD_ABLATION_DEFINITION}"
+        )
         if config.collect_attention_outputs
         else ATTENTION_PATTERN_DEFINITION
     )
@@ -110,7 +117,15 @@ def run_rq2(config: RQ2Config) -> None:
             append_eos=config.append_eos,
         )
     )
-    required_keys = ("source_alignment",) + (("attention_outputs",) if config.collect_attention_outputs else ())
+    required_keys = ("source_alignment",) + (
+        (
+            "attention_outputs",
+            "attention_post_o_proj_outputs",
+            "attention_head_ablation_impacts",
+        )
+        if config.collect_attention_outputs
+        else ()
+    )
     _require_tensor_keys(config.resolved_states_dir, required_keys)
     attention_plot_dir = config.resolved_plots_dir / "attention_probs" if config.collect_attention_outputs else config.resolved_plots_dir
     visualize(
@@ -134,6 +149,50 @@ def run_rq2(config: RQ2Config) -> None:
                 left_model=config.model_name,
                 right_model=config.model_name,
                 mode="attention_output",
+            )
+        )
+        visualize(
+            VisualizeConfig(
+                run=config.resolved_states_dir,
+                left_run=None,
+                right_run=None,
+                output_dir=config.resolved_plots_dir / "attention_post_o_proj_outputs",
+                left_model=config.model_name,
+                right_model=config.model_name,
+                mode="attention_post_o_proj_output",
+            )
+        )
+        visualize(
+            VisualizeConfig(
+                run=config.resolved_states_dir,
+                left_run=None,
+                right_run=None,
+                output_dir=config.resolved_plots_dir / "attention_output_deltas",
+                left_model=config.model_name,
+                right_model=config.model_name,
+                mode="attention_output_delta",
+            )
+        )
+        visualize(
+            VisualizeConfig(
+                run=config.resolved_states_dir,
+                left_run=None,
+                right_run=None,
+                output_dir=config.resolved_plots_dir / "attention_post_o_proj_output_deltas",
+                left_model=config.model_name,
+                right_model=config.model_name,
+                mode="attention_post_o_proj_output_delta",
+            )
+        )
+        visualize(
+            VisualizeConfig(
+                run=config.resolved_states_dir,
+                left_run=None,
+                right_run=None,
+                output_dir=config.resolved_plots_dir / "attention_head_ablation",
+                left_model=config.model_name,
+                right_model=config.model_name,
+                mode="attention_head_ablation",
             )
         )
 

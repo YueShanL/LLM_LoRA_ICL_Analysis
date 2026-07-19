@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import random
 
-from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, validator_name
+from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, resolved_validator_name
 from lora_instruction_analysis.model.collect import (
     CONDITIONS,
     CollectConfig,
@@ -133,6 +133,62 @@ def _positions(encoded: dict, patch_span: str) -> list[int]:
     raise ValueError(f"Unknown patch span {patch_span!r}; use target or text.")
 
 
+def _input_start(encoded: dict) -> int:
+    positions = [row["position"] for row in encoded["source_alignment"] if row["span"] == "input"]
+    if not positions:
+        raise ValueError("Could not find input text token positions for RQ3 alignment.")
+    return min(positions)
+
+
+def _pad_token_id(tokenizer) -> int:
+    token_id = getattr(tokenizer, "pad_token_id", None)
+    if token_id is None:
+        token_id = getattr(tokenizer, "eos_token_id", None)
+    if token_id is None:
+        raise ValueError("Tokenizer must define pad_token_id or eos_token_id for RQ3 position alignment.")
+    return token_id
+
+
+def _left_pad_encoded(encoded: dict, pad_count: int, pad_token_id: int) -> dict:
+    if pad_count <= 0:
+        return encoded
+    padded = dict(encoded)
+    padded["input_ids"] = [pad_token_id] * pad_count + encoded["input_ids"]
+    padded["labels"] = [-100] * pad_count + encoded["labels"]
+    padded["prompt_length"] = encoded["prompt_length"] + pad_count
+    padded["target_positions"] = [position + pad_count for position in encoded["target_positions"]]
+    padded["prediction_positions"] = [position + pad_count for position in encoded["prediction_positions"]]
+    padded["target_alignment"] = [
+        {
+            **row,
+            "target_position": row["target_position"] + pad_count,
+            "prediction_position": row["prediction_position"] + pad_count,
+        }
+        for row in encoded["target_alignment"]
+    ]
+    pad_rows = [
+        {"position": position, "span": "prompt", "alignment_key": f"prompt:{position}:{pad_token_id}", "token_id": pad_token_id}
+        for position in range(pad_count)
+    ]
+    shifted_rows = []
+    for row in encoded["source_alignment"]:
+        shifted = {**row, "position": row["position"] + pad_count}
+        if shifted["span"] == "prompt":
+            shifted["alignment_key"] = f"prompt:{shifted['position']}:{shifted['token_id']}"
+        shifted_rows.append(shifted)
+    padded["source_alignment"] = pad_rows + shifted_rows
+    return padded
+
+
+def _align_encoded_to_input_start(encoded: dict, target_start: int, pad_token_id: int) -> dict:
+    current_start = _input_start(encoded)
+    if current_start > target_start:
+        raise ValueError(
+            f"Cannot align encoded input text by padding: current start {current_start} is after target start {target_start}."
+        )
+    return _left_pad_encoded(encoded, target_start - current_start, pad_token_id)
+
+
 def _patch_mapping(source_encoded: dict, target_encoded: dict, patch_span: str) -> tuple[list[int], list[int]]:
     if patch_span == "target":
         source_rows = source_encoded["target_alignment"]
@@ -164,6 +220,7 @@ def _capture_activation(
     patch_span: str,
     prompt_format: str,
     append_eos: bool,
+    align_input_start: int | None = None,
 ):
     encoded = _encode(
         tokenizer,
@@ -172,6 +229,8 @@ def _capture_activation(
         prompt_format=prompt_format,
         append_eos=append_eos,
     )
+    if align_input_start is not None:
+        encoded = _align_encoded_to_input_start(encoded, align_input_start, _pad_token_id(tokenizer))
     device = next(model.parameters()).device
     input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
     patch_positions = torch.tensor(_positions(encoded, patch_span), dtype=torch.long, device=device)
@@ -211,6 +270,8 @@ def _run_target(
         prompt_format=prompt_format,
         append_eos=append_eos,
     )
+    if source_encoded is not None:
+        encoded = _align_encoded_to_input_start(encoded, _input_start(source_encoded), _pad_token_id(tokenizer))
     device = next(model.parameters()).device
     input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
     labels = torch.tensor([encoded["labels"]], dtype=torch.long, device=device)
@@ -295,6 +356,8 @@ def _generate_target(
         prompt_format=prompt_format,
         append_eos=append_eos,
     )
+    if source_encoded is not None:
+        encoded = _align_encoded_to_input_start(encoded, _input_start(source_encoded), _pad_token_id(tokenizer))
     prompt_len = encoded["prompt_length"]
     prompt_ids = encoded["input_ids"][:prompt_len]
     device = next(model.parameters()).device
@@ -369,6 +432,21 @@ def _generate_target(
 def _capture_patches_for_condition(torch, tokenizer, model, records: list[dict], config: PatchConfig, condition: str):
     patches = []
     for record in records:
+        source_encoded = _encode(
+            tokenizer,
+            record,
+            include_instruction=condition == "instruction_only",
+            prompt_format=config.prompt_format,
+            append_eos=config.append_eos,
+        )
+        target_encoded = _encode(
+            tokenizer,
+            record,
+            include_instruction=config.target_condition == "instruction_only",
+            prompt_format=config.prompt_format,
+            append_eos=config.append_eos,
+        )
+        align_input_start = max(_input_start(source_encoded), _input_start(target_encoded))
         patch, encoded = _capture_activation(
             torch,
             tokenizer,
@@ -379,6 +457,7 @@ def _capture_patches_for_condition(torch, tokenizer, model, records: list[dict],
             config.patch_span,
             config.prompt_format,
             config.append_eos,
+            align_input_start,
         )
         patches.append((patch, encoded))
     return patches
@@ -416,6 +495,10 @@ def run_activation_patching(config: PatchConfig) -> None:
         raise ValueError("--patch-span must be target or text.")
 
     records = _select_records(config)
+    task_ids = {record["task_id"] for record in records}
+    if len(task_ids) != 1:
+        raise ValueError(f"Activation patching requires exactly one task_id, found {sorted(task_ids)}")
+    resolved_validator = resolved_validator_name(next(iter(task_ids)), config.validator)
     config.output_dir.mkdir(parents=True, exist_ok=True)
     (config.output_dir / "config.json").write_text(
         json.dumps(
@@ -424,7 +507,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 "dataset_path": str(config.dataset_path),
                 "adapter_path": str(config.adapter_path) if config.adapter_path else None,
                 "output_dir": str(config.output_dir),
-                "validator": validator_name(config.validator),
+                "validator": resolved_validator,
             },
             indent=2,
             ensure_ascii=False,
@@ -461,7 +544,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.patch_span,
                 config.prompt_format,
                 config.append_eos,
-                config.validator,
+                resolved_validator,
             )
             rows.append(base_row)
             base_gen = _generate_target(
@@ -475,7 +558,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.patch_span,
                 config.prompt_format,
                 config.append_eos,
-                config.validator,
+                resolved_validator,
             )
             generation_rows.append(base_gen)
             outcome_rows.append(
@@ -502,7 +585,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.patch_span,
                     config.prompt_format,
                     config.append_eos,
-                    config.validator,
+                    resolved_validator,
                     patch,
                     source_encoded,
                 )
@@ -520,7 +603,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.patch_span,
                     config.prompt_format,
                     config.append_eos,
-                    config.validator,
+                    resolved_validator,
                     patch,
                     source_encoded,
                 )

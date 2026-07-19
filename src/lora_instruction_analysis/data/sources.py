@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Iterable, Iterator
+from typing import Iterator
 
 
 @dataclass(frozen=True)
@@ -100,11 +100,3 @@ def iter_public_texts(
         normalized = normalize_text(value, min_words=min_words, max_words=max_words)
         if normalized is not None:
             yield normalized
-
-
-def iter_builtin_fallback_texts() -> Iterable[str]:
-    yield "dataset will be designed"
-    yield "small public text examples support fast experiments"
-    yield "the model should copy all unchanged words"
-    yield "activation analysis needs aligned target tokens"
-    yield "synthetic tasks reduce memorized domain knowledge"

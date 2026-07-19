@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from lora_instruction_analysis.model.task_acceptance import TaskAcceptanceConfig, passes_gate
 import lora_instruction_analysis.model.task_acceptance as task_acceptance
+from lora_instruction_analysis.model.prompt_eval import _max_new_tokens
 
 
 def test_passes_gate():
@@ -22,7 +23,19 @@ def test_passes_gate():
     assert not passes_gate(high, high, config)
 
 
-def test_task_arg_builds_quick_dataset(tmp_path):
+def test_at_operator_prompt_eval_generation_budget_has_task_floor():
+    record = {"task_id": "at_operator_mod_minus_left"}
+    assert _max_new_tokens(record, [1], 32) == 128
+
+
+def test_task_arg_builds_quick_dataset(tmp_path, monkeypatch):
+    monkeypatch.setattr(task_acceptance, "build_dataset", lambda config: {
+        "train": [], "validation": [], "test": [
+            {"sample_id": f"s{i}", "task_id": "last_word", "input_text": f"one two{i}",
+             "instruction_text": "last", "target_text": f"two{i}", "condition": "test"}
+            for i in range(2)
+        ]
+    })
     args = type(
         "Args",
         (),
@@ -31,6 +44,10 @@ def test_task_arg_builds_quick_dataset(tmp_path):
             "task": "last_word",
             "output_dir": tmp_path,
             "max_samples": 2,
+            "source": "wikitext",
+            "max_source_rows": 100,
+            "model_name": "dummy",
+            "prompt_format": "raw",
         },
     )()
     dataset_path = task_acceptance._dataset_path(args)
@@ -72,5 +89,6 @@ def test_validate_task_passes_custom_validator_to_prompt_eval(tmp_path, monkeypa
         )
     )
     assert summary["accepted"]
-    assert seen_validators == [accepts_anything, accepts_anything]
+    assert seen_validators == ["accepts_anything"] * 4
     assert summary["config"]["validator"] == "accepts_anything"
+    assert summary["selected_prompt"]["index"] == 1

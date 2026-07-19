@@ -2,96 +2,61 @@
 
 ## Status
 
-This report uses the latest RQ1 rerun with explicit target-token alignment metadata.
+This report was updated from:
 
-- Date run: 2026-07-01
-- Base model: `meta-llama/Llama-3.2-3B`
-- Conditions:
-  - `base`: no instruction, no LoRA
-  - `instruction_only`: natural-language task instruction, no LoRA
-  - `lora_only`: LoRA adapter, no instruction
-- Metric:
-  - `cosine(hidden_instruction_only - hidden_base, hidden_lora_only - hidden_base)`
-  - computed only on teacher-forced target output token positions
-- Alignment:
-  - target tokens aligned by `target:{token_index}:{token_id}`
-  - mismatched target tokenization now fails instead of truncating by length
+```text
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709
+```
 
-## Runs
+The run covers 10 selected synthetic tasks with `meta-llama/Llama-3.2-3B-Instruct`, rank-8 LoRA adapters, `test` split, `max_samples=16`, `seed=13`, `dtype=bfloat16`, `device=cuda`, `prompt_format=chat_template`, and EOS appended.
 
-| Task | Run directory | Samples |
-| --- | --- | ---: |
-| `add_zxq_after_t_or_l` | `experiments/add_zxq_llama32_3b_r8_20260628_retry2` | 100 |
-| `last_word` | `experiments/last_word_llama32_3b_r8_clean` | 100 |
+RQ1 compares residual-stream perturbation directions:
 
-## Adapter Quality
+```text
+cosine(hidden_instruction_only - hidden_base, hidden_lora_only - hidden_base)
+```
 
-### `add_zxq_after_t_or_l`
+The comparison is computed on aligned teacher-forced target-token positions.
 
-| Condition | Mean loss | Token accuracy | Sequence accuracy | Mean target tokens |
-| --- | ---: | ---: | ---: | ---: |
-| `base` | 1.2884 | 0.8489 | 0.0400 | 32.08 |
-| `instruction_only` | 0.6836 | 0.9044 | 0.1400 | 32.08 |
-| `lora_only` | 0.0384 | 0.9868 | 0.5800 | 32.08 |
+## Tasks
 
-### `last_word`
+| Task | Rows | Mean cosine | Min | Max | Best layer | Best layer mean | LoRA seq acc | Instruction seq acc |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `reverse_words` | 54,404 | 0.6488 | -0.3409 | 0.9273 | 27 | 0.7820 | 1.0000 | 0.0000 |
+| `first_word` | 2,204 | 0.3025 | -0.2721 | 0.7629 | 28 | 0.5253 | 1.0000 | 0.9375 |
+| `words_starting_with_letter` | 2,552 | 0.3914 | -0.1739 | 0.8295 | 23 | 0.5653 | 0.9375 | 0.7500 |
+| `exact_three_word_prefix` | 5,568 | 0.3170 | -0.3816 | 0.8498 | 27 | 0.5853 | 1.0000 | 1.0000 |
+| `has_repeated_word` | 1,856 | 0.2150 | -0.1977 | 0.5559 | 28 | 0.4185 | 1.0000 | 0.8750 |
+| `at_operator_mod_minus_left` | 2,552 | 0.1731 | -0.2575 | 0.6297 | 25 | 0.3838 | 1.0000 | 0.0000 |
+| `formal_language_a_n_b_n` | 1,856 | 0.3809 | 0.0000 | 0.6502 | 28 | 0.6059 | 1.0000 | 0.7500 |
+| `extract_items_from_set` | 6,960 | 0.3112 | -0.1946 | 0.7188 | 28 | 0.5703 | 1.0000 | 0.6875 |
+| `words_containing_bigram_qu` | 3,248 | 0.2572 | -0.0732 | 0.5138 | 28 | 0.4543 | 1.0000 | 0.5000 |
+| `uppercase_last_word` | 3,712 | 0.4822 | -0.3678 | 0.9449 | 24 | 0.7033 | 1.0000 | 0.0625 |
 
-| Condition | Mean loss | Token accuracy | Sequence accuracy | Mean target tokens |
-| --- | ---: | ---: | ---: | ---: |
-| `base` | 7.0229 | 0.1425 | 0.0100 | 1.35 |
-| `instruction_only` | 6.1725 | 0.1417 | 0.0100 | 1.35 |
-| `lora_only` | 0.0343 | 0.9900 | 0.9900 | 1.35 |
-
-## Residual Similarity Summary
-
-| Task | Token-layer rows | Overall mean cosine | Min | Max | Best layer | Best layer mean |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `add_zxq_after_t_or_l` | 93,032 | 0.3290 | -0.7936 | 0.8742 | 16 | 0.4318 |
-| `last_word` | 3,915 | 0.3938 | -0.4426 | 0.7974 | 22 | 0.5644 |
-
-### Best Layers
-
-| Task | Layer | Mean cosine | Count | Min | Max |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `add_zxq_after_t_or_l` | 16 | 0.4318 | 3,208 | 0.0470 | 0.8109 |
-| `add_zxq_after_t_or_l` | 13 | 0.4239 | 3,208 | 0.0779 | 0.7126 |
-| `add_zxq_after_t_or_l` | 17 | 0.4233 | 3,208 | 0.0269 | 0.8109 |
-| `add_zxq_after_t_or_l` | 18 | 0.4207 | 3,208 | 0.0492 | 0.8033 |
-| `add_zxq_after_t_or_l` | 19 | 0.4191 | 3,208 | 0.0357 | 0.8079 |
-| `last_word` | 22 | 0.5644 | 135 | 0.1470 | 0.7566 |
-| `last_word` | 21 | 0.5571 | 135 | 0.1120 | 0.7458 |
-| `last_word` | 23 | 0.5566 | 135 | 0.1337 | 0.7608 |
-| `last_word` | 24 | 0.5475 | 135 | 0.1262 | 0.7652 |
-| `last_word` | 20 | 0.5393 | 135 | 0.0655 | 0.7397 |
+Across tasks, the unweighted mean of task-level mean cosine similarity is **0.3479**. Task means range from **0.1731** (`at_operator_mod_minus_left`) to **0.6488** (`reverse_words`).
 
 ## Interpretation
 
-Both LoRA adapters learned their target task well. The `last_word` adapter is especially clean, with 0.99 token and sequence accuracy. The `add_zxq_after_t_or_l` adapter has high token accuracy but lower sequence accuracy because the target sequence is much longer.
+The LoRA adapters are behaviorally strong on teacher-forced sequence accuracy: 9 of 10 tasks reach 1.0000, and `words_starting_with_letter` reaches 0.9375. Instruction-only prompting is much less consistent, ranging from 0.0000 to 1.0000.
 
-Residual perturbations are moderately aligned. `last_word` reaches stronger best-layer alignment than `add_zxq_after_t_or_l`, but neither task shows near-identical perturbation directions across the full residual stream.
+Residual perturbation similarity is moderate rather than near-identical. Best layers are mostly late layers, especially layers 24-28, but overall task means remain well below a computational-equivalence result.
 
-This supports a cautious conclusion: LoRA-only and instruction-only behavior can point residual changes in related directions, especially in middle/late layers, but RQ1 alone does not prove that LoRA reconstructs the same computation path as natural-language instruction prompting.
+The current RQ1 evidence supports a cautious claim: LoRA-only and instruction-only runs often move residual activations in related directions, but the effect is task-dependent and does not show that the adapter reconstructs the same residual-stream trajectory as natural-language instruction prompting.
 
 ## Output Files
 
-### `add_zxq_after_t_or_l`
+For each task:
 
-- `experiments/add_zxq_llama32_3b_r8_20260628_retry2/states/rq1/`
-- `experiments/add_zxq_llama32_3b_r8_20260628_retry2/plots/rq1/token_similarity.html`
-- `experiments/add_zxq_llama32_3b_r8_20260628_retry2/plots/rq1/token_similarity.csv`
-- `experiments/add_zxq_llama32_3b_r8_20260628_retry2/plots/rq1/aggregate_similarity.csv`
-- `experiments/add_zxq_llama32_3b_r8_20260628_retry2/plots/rq1/quality_summary.csv`
-
-### `last_word`
-
-- `experiments/last_word_llama32_3b_r8_clean/states/rq1/`
-- `experiments/last_word_llama32_3b_r8_clean/plots/rq1/token_similarity.html`
-- `experiments/last_word_llama32_3b_r8_clean/plots/rq1/token_similarity.csv`
-- `experiments/last_word_llama32_3b_r8_clean/plots/rq1/aggregate_similarity.csv`
-- `experiments/last_word_llama32_3b_r8_clean/plots/rq1/quality_summary.csv`
+```text
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709/{task}/states/rq1/
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709/{task}/plots/rq1/aggregate_similarity.csv
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709/{task}/plots/rq1/quality_summary.csv
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709/{task}/plots/rq1/token_similarity.csv
+experiments/lora_selected_tasks_instruct_rawchat_r8_20260709/{task}/plots/rq1/token_similarity.html
+```
 
 ## Limitations
 
-- RQ1 compares residual perturbation directions, not causal interchangeability.
-- RQ2/RQ3 should be rerun after their alignment-specific fixes before making claims about attention routing or causal patchability.
-- `add_zxq_after_t_or_l` is harder to judge at sequence level because long targets make exact sequence accuracy strict.
+- Each task uses 16 test samples, so task-level estimates are still small-sample.
+- RQ1 measures directional similarity of residual perturbations, not causal interchangeability.
+- Instruction-only behavior is weak for several tasks, which limits direct equivalence claims.

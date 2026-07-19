@@ -24,7 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-condition")
     parser.add_argument("--target-condition")
     parser.add_argument("--layer", type=int)
-    parser.add_argument("--max-new-tokens", type=int, default=20)
+    parser.add_argument("--max-new-tokens", type=int)
     parser.add_argument("--patch-span", choices=("target", "text"), default="text")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")

@@ -11,7 +11,7 @@ from pathlib import Path
 import random
 from statistics import mean
 
-from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, validator_name
+from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, get_task, resolved_validator_name
 from lora_instruction_analysis.model.collect import _accuracy, _dataset_file, _read_jsonl, _torch_dtype, _write_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS, encode_record, ensure_chat_template
 
@@ -39,6 +39,7 @@ class PromptEvalConfig:
     prompt_format: str = "raw"
     append_eos: bool = True
     validator: ValidationSelector = None
+    adapter_path: Path | None = None
 
 
 def _select_records(config: PromptEvalConfig) -> list[dict]:
@@ -68,6 +69,12 @@ def _load_model(config: PromptEvalConfig):
     if device == "auto":
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(config.model_name, **kwargs)
+    if config.adapter_path is not None:
+        try:
+            from peft import PeftModel
+        except ImportError as exc:
+            raise RuntimeError("LoRA evaluation requires peft. Install .[train].") from exc
+        model = PeftModel.from_pretrained(model, str(config.adapter_path))
     if device != "auto":
         model.to(device)
     model.eval()
@@ -105,6 +112,11 @@ def _token_accuracy(pred_ids: list[int], target_ids: list[int]) -> dict:
         "token_accuracy": correct / denom if denom else 0.0,
         "sequence_accuracy": float(bool(target_ids) and pred_ids == target_ids),
     }
+
+
+def _max_new_tokens(record: dict, target_ids: list[int], generation_extra_tokens: int) -> int:
+    task_limit = get_task(record["task_id"]).max_generate_tokens
+    return task_limit if task_limit is not None else len(target_ids) + generation_extra_tokens
 
 
 def _run_teacher_forced(
@@ -175,11 +187,12 @@ def _run_autoregressive(
     attention_mask = torch.ones_like(input_ids)
 
     with torch.no_grad():
+        max_new_tokens = _max_new_tokens(record, target_ids, generation_extra_tokens)
         generated = model.generate(
             input_ids=input_ids,
             attention_mask=attention_mask,
             do_sample=False,
-            max_new_tokens=len(target_ids) + generation_extra_tokens,
+            max_new_tokens=max_new_tokens,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )
@@ -192,6 +205,7 @@ def _run_autoregressive(
         "task_id": record["task_id"],
         "prompt_tokens": len(prompt_ids),
         "target_tokens": len(target_ids),
+        "max_new_tokens": max_new_tokens,
         "generated_tokens": len(pred_ids),
         "pred_text": pred_text,
         "target_text": record.get("target_text"),
@@ -248,6 +262,10 @@ def _write_report(path: Path, summary: dict) -> None:
 
 def evaluate_prompt(config: PromptEvalConfig) -> dict:
     records = _select_records(config)
+    task_ids = {record["task_id"] for record in records}
+    if len(task_ids) != 1:
+        raise ValueError(f"Prompt evaluation requires exactly one task_id, found {sorted(task_ids)}")
+    resolved_validator = resolved_validator_name(next(iter(task_ids)), config.validator)
     torch, tokenizer, model = _load_model(config)
     try:
         teacher_rows = [
@@ -261,7 +279,7 @@ def evaluate_prompt(config: PromptEvalConfig) -> dict:
                 config.include_instruction,
                 config.prompt_format,
                 config.append_eos,
-                config.validator,
+                resolved_validator,
             )
             for record in records
         ] if config.run_teacher_forced else []
@@ -277,7 +295,7 @@ def evaluate_prompt(config: PromptEvalConfig) -> dict:
                 config.include_instruction,
                 config.prompt_format,
                 config.append_eos,
-                config.validator,
+                resolved_validator,
             )
             for record in records
         ] if config.run_autoregressive else []
@@ -290,6 +308,7 @@ def evaluate_prompt(config: PromptEvalConfig) -> dict:
                 **asdict(config),
                 "dataset_path": str(config.dataset_path),
                 "output_dir": str(config.output_dir),
+                "adapter_path": str(config.adapter_path) if config.adapter_path else None,
                 "instruction_source": "none"
                 if not config.include_instruction
                 else "cli"
@@ -297,7 +316,7 @@ def evaluate_prompt(config: PromptEvalConfig) -> dict:
                 else "dataset_instruction_text",
                 "prompt_format": config.prompt_format,
                 "append_eos": config.append_eos,
-                "validator": validator_name(config.validator),
+                "validator": resolved_validator,
             },
         }
         if config.run_teacher_forced:
@@ -319,6 +338,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", required=True)
     parser.add_argument("--dataset-path", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--adapter-path", type=Path, help="Optional LoRA adapter to evaluate with the same task validator.")
     parser.add_argument("--instruction", help="Instruction prompt. Defaults to each row's instruction_text.")
     parser.add_argument("--instruction-file", type=Path)
     parser.add_argument("--split", default="test")
@@ -363,6 +383,7 @@ def main() -> None:
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
             validator=args.validator,
+            adapter_path=args.adapter_path,
         )
     )
     print(json.dumps({key: summary[key] for key in ("teacher_forced", "autoregressive")}, indent=2))
