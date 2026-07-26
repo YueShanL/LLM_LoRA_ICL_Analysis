@@ -43,6 +43,8 @@ def _instruction(record: dict, instruction: str | None) -> str:
 
 
 def _user_content(record: dict, instruction: str | None, include_instruction: bool) -> str:
+    if include_instruction and record.get("prompt_preamble") is not None:
+        return f"{record['prompt_preamble']}\n\nInput:\n{record['input_text']}"
     if include_instruction:
         return f"{_instruction(record, instruction)}\n\nInput:\n{record['input_text']}"
     return record["input_text"]
@@ -82,7 +84,12 @@ def encode_record(
     target = target or ""
 
     if prompt_format == "raw":
-        prompt = make_prompt(record["input_text"], _instruction(record, instruction), include_instruction=include_instruction)
+        prompt = make_prompt(
+            record["input_text"],
+            _instruction(record, instruction),
+            include_instruction=include_instruction,
+            preamble=record.get("prompt_preamble") if include_instruction else None,
+        )
         prompt_ids = _ids(tokenizer, prompt)
         target_ids = _with_eos(tokenizer, _ids(tokenizer, target), append_eos) if has_target else []
         input_ids = prompt_ids + target_ids
@@ -151,7 +158,13 @@ def source_alignment(
 
     input_span = None
     if prompt_format == "raw":
-        prefix = f"Instruction:\n{record['instruction_text']}\n\nInput:\n" if include_instruction else "Input:\n"
+        prefix = (
+            f"{record['prompt_preamble']}\n\nInput:\n"
+            if include_instruction and record.get("prompt_preamble") is not None
+            else f"Instruction:\n{record['instruction_text']}\n\nInput:\n"
+            if include_instruction
+            else "Input:\n"
+        )
         input_span = (len(_ids(tokenizer, prefix)), len(_ids(tokenizer, prefix + record["input_text"])))
     elif prompt_format == "chat_template":
         input_span = _find_span(input_ids, _ids(tokenizer, record["input_text"]))

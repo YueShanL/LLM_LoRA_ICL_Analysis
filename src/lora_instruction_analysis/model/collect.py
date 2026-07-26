@@ -9,6 +9,7 @@ from pathlib import Path
 import random
 from typing import Iterable
 
+from lora_instruction_analysis.data.icl import attach_dataset_icl_examples
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS, encode_record, ensure_chat_template
 
 
@@ -30,6 +31,8 @@ class CollectConfig:
     collect_attention_outputs: bool = False
     prompt_format: str = "raw"
     append_eos: bool = True
+    icl_examples: int = 0
+    icl_split: str = "train"
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -50,11 +53,15 @@ def _dataset_file(dataset_path: Path, split: str) -> Path:
 def _select_records(config: CollectConfig) -> list[dict]:
     records = _read_jsonl(_dataset_file(config.dataset_path, config.split))
     if config.max_samples is None:
-        return records
+        return attach_dataset_icl_examples(
+            records, config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+        )
     rng = random.Random(config.seed)
     chosen = records[:]
     rng.shuffle(chosen)
-    return chosen[: config.max_samples]
+    return attach_dataset_icl_examples(
+        chosen[: config.max_samples], config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+    )
 
 
 def _torch_dtype(torch, dtype: str):
@@ -157,6 +164,7 @@ def _attention_output_hooks(model, target_positions):
     pre_o_proj_captures = []
     post_o_proj_captures = []
     head_ablation_captures = []
+    executed_layer_names = []
     modules = [
         (name, module)
         for name, module in model.named_modules()
@@ -183,6 +191,7 @@ def _attention_output_hooks(model, target_positions):
                 )
             per_head = value[0, target_positions, :].view(len(target_positions), int(head_count), int(head_dim))
             current_per_head = per_head
+            executed_layer_names.append(name)
             pre_o_proj_captures.append(per_head.permute(1, 0, 2).detach().cpu())
 
         def save_output(o_proj, _inputs, output):
@@ -222,13 +231,53 @@ def _attention_output_hooks(model, target_positions):
         save_input, save_output = hook_for(name, module)
         handles.append(module.o_proj.register_forward_pre_hook(save_input))
         handles.append(module.o_proj.register_forward_hook(save_output))
-    return pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, handles, len(modules)
+    return pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, executed_layer_names, handles, len(modules)
 
 
-def _stack_attention_outputs(torch, captures: list, expected_layers: int) -> object:
+def _stack_attention_outputs(torch, captures: list, expected_layers: int, *, pad: bool = False) -> object:
     if len(captures) != expected_layers:
         raise RuntimeError(f"Captured {len(captures)} attention output layers, expected {expected_layers}.")
+    if pad and captures:
+        shapes = [tuple(capture.shape) for capture in captures]
+        if len(set(shapes)) > 1:
+            max_shape = tuple(max(shape[dim] for shape in shapes) for dim in range(len(shapes[0])))
+            padded = []
+            for capture in captures:
+                output = capture.new_zeros(max_shape)
+                output[tuple(slice(0, size) for size in capture.shape)] = capture
+                padded.append(output)
+            captures = padded
     return torch.stack(captures).contiguous()
+
+
+def _normalize_attention_layer_name(name: str) -> str:
+    while name.startswith("base_model.model."):
+        name = name.removeprefix("base_model.model.")
+    return name
+
+
+def _validate_attention_layer_names(expected: list[str] | None, current: list[str], sample_id: str, condition: str) -> list[str]:
+    current = [_normalize_attention_layer_name(name) for name in current]
+    if expected is None:
+        return current
+    if current != expected:
+        raise RuntimeError(
+            "Attention output layer path changed within collect run for "
+            f"{sample_id} / {condition}: expected {expected}, got {current}."
+        )
+    return expected
+
+
+def _validate_attention_layer_shapes(expected: list[list[int]] | None, current: list[list[int]], sample_id: str, condition: str) -> list[list[int]]:
+    current_layout = [[shape[0], shape[-1]] for shape in current]
+    if expected is None:
+        return current_layout
+    if current_layout != expected:
+        raise RuntimeError(
+            "Attention output layer shapes changed within collect run for "
+            f"{sample_id} / {condition}: expected {expected}, got {current_layout}."
+        )
+    return expected
 
 
 def _run_one(
@@ -255,8 +304,8 @@ def _run_one(
     labels = torch.tensor([encoded["labels"]], dtype=torch.long, device=device)
     target_positions = torch.tensor(encoded["target_positions"], dtype=torch.long, device=device)
     prediction_positions = torch.tensor(encoded["prediction_positions"], dtype=torch.long, device=device)
-    pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, handles, expected_attention_output_layers = (
-        _attention_output_hooks(model, target_positions) if collect_attention_outputs else ([], [], [], [], 0)
+    pre_o_proj_captures, post_o_proj_captures, head_ablation_captures, attention_output_layer_names, handles, _registered_attention_output_layers = (
+        _attention_output_hooks(model, target_positions) if collect_attention_outputs else ([], [], [], [], [], 0)
     )
 
     try:
@@ -303,11 +352,24 @@ def _run_one(
             "attentions": attentions,
         }
     if collect_attention_outputs:
+        expected_attention_output_layers = len(pre_o_proj_captures)
+        if expected_attention_output_layers == 0:
+            raise RuntimeError("Captured no attention output layers.")
+        if len(post_o_proj_captures) != expected_attention_output_layers or len(head_ablation_captures) != expected_attention_output_layers:
+            raise RuntimeError(
+                "Captured inconsistent attention output layers: "
+                f"pre={len(pre_o_proj_captures)}, post={len(post_o_proj_captures)}, "
+                f"head_ablation={len(head_ablation_captures)}."
+            )
+        attention_output_layer_names = [_normalize_attention_layer_name(name) for name in attention_output_layer_names]
+        attention_output_layer_shapes = [list(capture.shape) for capture in pre_o_proj_captures]
+        tensor["attention_output_layer_names"] = list(attention_output_layer_names)
+        tensor["attention_output_layer_shapes"] = attention_output_layer_shapes
         tensor["attention_outputs"] = _stack_attention_outputs(
-            torch, pre_o_proj_captures, expected_attention_output_layers
+            torch, pre_o_proj_captures, expected_attention_output_layers, pad=True
         )
         tensor["attention_post_o_proj_outputs"] = _stack_attention_outputs(
-            torch, post_o_proj_captures, expected_attention_output_layers
+            torch, post_o_proj_captures, expected_attention_output_layers, pad=True
         )
         tensor["attention_head_ablation_impact_names"] = [
             "full_norm",
@@ -316,12 +378,12 @@ def _run_one(
             "ablated_cosine_to_full",
         ]
         tensor["attention_head_ablation_impacts"] = _stack_attention_outputs(
-            torch, head_ablation_captures, expected_attention_output_layers
+            torch, head_ablation_captures, expected_attention_output_layers, pad=True
         )
     torch.save(tensor, tensor_path)
 
     metrics = _accuracy(pred_ids, target_ids)
-    return {
+    metrics_row = {
         "sample_id": record["sample_id"],
         "task_id": record["task_id"],
         "condition": condition,
@@ -333,6 +395,10 @@ def _run_one(
         "target_text": record["target_text"],
         **metrics,
     }
+    if collect_attention_outputs:
+        metrics_row["attention_output_layer_names"] = list(attention_output_layer_names)
+        metrics_row["attention_output_layer_shapes"] = attention_output_layer_shapes
+    return metrics_row
 
 
 def collect(config: CollectConfig) -> None:
@@ -353,23 +419,35 @@ def collect(config: CollectConfig) -> None:
     _write_jsonl(config.output_dir / "dataset_snapshot.jsonl", records)
 
     rows = []
+    expected_attention_output_layer_names = None
+    expected_attention_output_layer_shapes = None
     for condition in config.conditions:
         torch, tokenizer, model = _load_model(config, use_lora=condition == "lora_only")
         for record in records:
             tensor_path = tensor_dir / f"{record['sample_id']}__{condition}.pt"
-            rows.append(
-                _run_one(
-                    torch,
-                    tokenizer,
-                    model,
-                    record,
-                    condition,
-                    tensor_path,
-                    collect_attention_outputs=config.collect_attention_outputs,
-                    prompt_format=config.prompt_format,
-                    append_eos=config.append_eos,
-                )
+            row = _run_one(
+                torch,
+                tokenizer,
+                model,
+                record,
+                condition,
+                tensor_path,
+                collect_attention_outputs=config.collect_attention_outputs,
+                prompt_format=config.prompt_format,
+                append_eos=config.append_eos,
             )
+            if config.collect_attention_outputs:
+                layer_names = row["attention_output_layer_names"]
+                expected_attention_output_layer_names = _validate_attention_layer_names(
+                    expected_attention_output_layer_names, layer_names, record["sample_id"], condition
+                )
+                expected_attention_output_layer_shapes = _validate_attention_layer_shapes(
+                    expected_attention_output_layer_shapes,
+                    row["attention_output_layer_shapes"],
+                    record["sample_id"],
+                    condition,
+                )
+            rows.append(row)
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -392,6 +470,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--collect-attention-outputs", action="store_true")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--icl-examples", type=int, default=0, help="Use N train input-output pairs in place of instruction text.")
+    parser.add_argument("--icl-split", default="train")
     return parser.parse_args()
 
 
@@ -412,6 +492,8 @@ def main() -> None:
             collect_attention_outputs=args.collect_attention_outputs,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
+            icl_examples=args.icl_examples,
+            icl_split=args.icl_split,
         )
     )
     print(f"Wrote model state run to {args.output_dir}")

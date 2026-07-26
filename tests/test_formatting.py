@@ -87,6 +87,31 @@ def test_chat_template_without_instruction_uses_bare_input_text():
     assert "Input:" not in prompt
 
 
+def test_raw_format_can_use_icl_examples_in_instruction_position():
+    record = {
+        **_record(),
+        "prompt_preamble": "Examples:\n\nExample 1:\nInput:\naa\nOutput:\nbb",
+    }
+    encoded = encode_record(CharTokenizer(), record, include_instruction=True, append_eos=False)
+    prompt = "".join(chr(token_id) for token_id, label in zip(encoded["input_ids"], encoded["labels"]) if label == -100)
+
+    assert prompt.startswith("Examples:\n\nExample 1:")
+    assert "Instruction:" not in prompt
+    assert prompt.endswith("Input:\nab\n\nOutput:\n")
+
+
+def test_chat_template_can_use_icl_examples_in_instruction_position():
+    record = {
+        **_record(),
+        "prompt_preamble": "Examples:\n\nExample 1:\nInput:\naa\nOutput:\nbb",
+    }
+    encoded = encode_record(ChatTokenizer(), record, include_instruction=True, prompt_format="chat_template")
+    prompt = "".join(chr(token_id) for token_id, label in zip(encoded["input_ids"], encoded["labels"]) if label == -100)
+
+    assert "<user>Examples:" in prompt
+    assert "copy" not in prompt
+
+
 def test_raw_format_allows_generation_only_record_without_target():
     encoded = encode_record(CharTokenizer(), _targetless_record(), include_instruction=True)
 

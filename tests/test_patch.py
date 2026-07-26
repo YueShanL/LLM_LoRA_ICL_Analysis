@@ -24,6 +24,19 @@ class CharTokenizer:
 
 
 class PatchTests(unittest.TestCase):
+    def test_block_uses_configured_path(self):
+        torch = importlib.import_module("torch")
+        nn = torch.nn
+        model = SimpleNamespace(
+            wrapper=SimpleNamespace(
+                tower=SimpleNamespace(
+                    blocks=nn.ModuleList([nn.Linear(1, 1), nn.Linear(1, 1)])
+                )
+            )
+        )
+
+        self.assertIs(patch._block(model, 1, "wrapper.tower.blocks"), model.wrapper.tower.blocks[1])
+
     def test_target_loss_ids_do_not_repeat_or_invent_targets(self):
         self.assertEqual(patch._target_loss_ids([10, 20], 0), 10)
         self.assertEqual(patch._target_loss_ids([10, 20], 1), 20)
@@ -82,6 +95,34 @@ class PatchTests(unittest.TestCase):
             [row["position"] for row in source["source_alignment"] if row["span"] == "input"],
             [row["position"] for row in padded_target["source_alignment"] if row["span"] == "input"],
         )
+
+    def test_capture_patches_for_condition_uses_preprocessed_record_only(self):
+        original_capture = patch._capture_activation
+        try:
+            patch._capture_activation = lambda *args: ("activation", patch._encode(args[1], args[3], include_instruction=True))
+            records = [
+                {
+                    "sample_id": "s1",
+                    "task_id": "task",
+                    "input_text": "ab",
+                    "instruction_text": "copy",
+                    "target_text": "xy",
+                    "prompt_preamble": "Examples:\n\nExample 1:\nInput:\naa\nOutput:\nbb",
+                }
+            ]
+            config = patch.PatchConfig(
+                model_name="model",
+                dataset_path=Path("dataset"),
+                output_dir=Path("out"),
+                icl_examples=1,
+            )
+
+            patches = patch._capture_patches_for_condition(None, CharTokenizer(), None, records, config, "instruction_only")
+        finally:
+            patch._capture_activation = original_capture
+
+        self.assertEqual(patches[0][0], "activation")
+        self.assertIn("source_alignment", patches[0][1])
 
     def test_patch_loss_visualization_rejects_legacy_generation_targets(self):
         with tempfile.TemporaryDirectory() as tmp:

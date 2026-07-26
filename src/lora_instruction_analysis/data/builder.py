@@ -48,7 +48,15 @@ class DatasetBuildConfig:
         return self.train_size + self.validation_size + self.test_size
 
 
-def make_prompt(input_text: str, instruction_text: str, *, include_instruction: bool) -> str:
+def make_prompt(
+    input_text: str,
+    instruction_text: str,
+    *,
+    include_instruction: bool,
+    preamble: str | None = None,
+) -> str:
+    if preamble is not None:
+        return f"{preamble}\n\nInput:\n{input_text}\n\nOutput:\n"
     if include_instruction:
         return (
             "Instruction:\n"

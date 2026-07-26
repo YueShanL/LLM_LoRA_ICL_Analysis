@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import random
 
+from lora_instruction_analysis.data.icl import attach_dataset_icl_examples
 from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, resolved_validator_name
 from lora_instruction_analysis.model.collect import (
     CONDITIONS,
@@ -46,16 +47,23 @@ class PatchConfig:
     prompt_format: str = "raw"
     append_eos: bool = True
     validator: ValidationSelector = None
+    icl_examples: int = 0
+    icl_split: str = "train"
+    block_path: str | None = None
 
 
 def _select_records(config: PatchConfig) -> list[dict]:
     records = _read_jsonl(_dataset_file(config.dataset_path, config.split))
     if config.max_samples is None:
-        return records
+        return attach_dataset_icl_examples(
+            records, config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+        )
     rng = random.Random(config.seed)
     chosen = records[:]
     rng.shuffle(chosen)
-    return chosen[: config.max_samples]
+    return attach_dataset_icl_examples(
+        chosen[: config.max_samples], config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+    )
 
 
 def _model_config(config: PatchConfig) -> CollectConfig:
@@ -94,13 +102,18 @@ def _control_sources(config: PatchConfig) -> list[tuple[str, str]]:
     return result
 
 
-def _block(model, layer: int):
+def _module_by_path(model, path: str):
+    module = model
+    for part in path.split("."):
+        module = getattr(module, part)
+    return module
+
+
+def _block(model, layer: int, block_path: str | None = None):
     base = model.get_base_model() if hasattr(model, "get_base_model") else model
-    for path in ("model.layers", "transformer.h", "gpt_neox.layers"):
-        module = base
+    for path in ([block_path] if block_path else []) + ["model.layers", "transformer.h", "gpt_neox.layers"]:
         try:
-            for part in path.split("."):
-                module = getattr(module, part)
+            module = _module_by_path(base, path)
             return module[layer]
         except (AttributeError, IndexError):
             continue
@@ -220,6 +233,7 @@ def _capture_activation(
     patch_span: str,
     prompt_format: str,
     append_eos: bool,
+    block_path: str | None,
     align_input_start: int | None = None,
 ):
     encoded = _encode(
@@ -240,7 +254,7 @@ def _capture_activation(
         hidden = output[0] if isinstance(output, tuple) else output
         captured["activation"] = hidden[0, patch_positions, :].detach().cpu()
 
-    handle = _block(model, layer).register_forward_hook(save)
+    handle = _block(model, layer, block_path).register_forward_hook(save)
     try:
         with torch.no_grad():
             model(input_ids=input_ids, use_cache=False)
@@ -260,6 +274,7 @@ def _run_target(
     prompt_format: str,
     append_eos: bool,
     validator: ValidationSelector,
+    block_path: str | None,
     patch=None,
     source_encoded: dict | None = None,
 ) -> dict:
@@ -289,7 +304,7 @@ def _run_target(
         def apply_patch(_module, _inputs, output):
             return _with_patched_slice(torch, output, patch_positions, patch)
 
-        handle = _block(model, layer).register_forward_hook(apply_patch)
+        handle = _block(model, layer, block_path).register_forward_hook(apply_patch)
     try:
         with torch.no_grad():
             outputs = model(input_ids=input_ids, labels=labels, use_cache=False)
@@ -346,6 +361,7 @@ def _generate_target(
     prompt_format: str,
     append_eos: bool,
     validator: ValidationSelector,
+    block_path: str | None,
     patch=None,
     source_encoded: dict | None = None,
 ) -> dict:
@@ -374,7 +390,7 @@ def _generate_target(
         def apply_patch(_module, _inputs, output):
             return _visible_patch(torch, output, patch_position_list, patch)
 
-        handle = _block(model, layer).register_forward_hook(apply_patch)
+        handle = _block(model, layer, block_path).register_forward_hook(apply_patch)
     pred_ids = []
     loss_target_ids = []
     token_losses = []
@@ -457,6 +473,7 @@ def _capture_patches_for_condition(torch, tokenizer, model, records: list[dict],
             config.patch_span,
             config.prompt_format,
             config.append_eos,
+            config.block_path,
             align_input_start,
         )
         patches.append((patch, encoded))
@@ -545,6 +562,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.prompt_format,
                 config.append_eos,
                 resolved_validator,
+                config.block_path,
             )
             rows.append(base_row)
             base_gen = _generate_target(
@@ -559,6 +577,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                 config.prompt_format,
                 config.append_eos,
                 resolved_validator,
+                config.block_path,
             )
             generation_rows.append(base_gen)
             outcome_rows.append(
@@ -586,6 +605,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.prompt_format,
                     config.append_eos,
                     resolved_validator,
+                    config.block_path,
                     patch,
                     source_encoded,
                 )
@@ -604,6 +624,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     config.prompt_format,
                     config.append_eos,
                     resolved_validator,
+                    config.block_path,
                     patch,
                     source_encoded,
                 )
@@ -662,6 +683,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
     parser.add_argument("--validator", default=None, help="Override task validation: task_default, exact, single_token, integer, or yes_no.")
+    parser.add_argument("--icl-examples", type=int, default=0, help="Use N train input-output pairs in place of instruction text.")
+    parser.add_argument("--icl-split", default="train")
+    parser.add_argument("--block-path", help="Dot path to transformer blocks for activation patching, e.g. model.layers.")
     return parser.parse_args()
 
 
@@ -686,6 +710,9 @@ def main() -> None:
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
             validator=args.validator,
+            icl_examples=args.icl_examples,
+            icl_split=args.icl_split,
+            block_path=args.block_path,
         )
     )
     print(f"Wrote activation patching metrics to {args.output_dir}")

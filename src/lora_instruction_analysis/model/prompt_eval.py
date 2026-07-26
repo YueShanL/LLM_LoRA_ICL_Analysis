@@ -11,6 +11,7 @@ from pathlib import Path
 import random
 from statistics import mean
 
+from lora_instruction_analysis.data.icl import attach_dataset_icl_examples
 from lora_instruction_analysis.data.tasks import ValidationSelector, evaluate_output, get_task, resolved_validator_name
 from lora_instruction_analysis.model.collect import _accuracy, _dataset_file, _read_jsonl, _torch_dtype, _write_jsonl
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS, encode_record, ensure_chat_template
@@ -40,16 +41,22 @@ class PromptEvalConfig:
     append_eos: bool = True
     validator: ValidationSelector = None
     adapter_path: Path | None = None
+    icl_examples: int = 0
+    icl_split: str = "train"
 
 
 def _select_records(config: PromptEvalConfig) -> list[dict]:
     records = _read_jsonl(_dataset_file(config.dataset_path, config.split))
     if config.max_samples is None:
-        return records
+        return attach_dataset_icl_examples(
+            records, config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+        )
     rng = random.Random(config.seed)
     chosen = records[:]
     rng.shuffle(chosen)
-    return chosen[: config.max_samples]
+    return attach_dataset_icl_examples(
+        chosen[: config.max_samples], config.dataset_path, example_count=config.icl_examples, split=config.icl_split
+    )
 
 
 def _load_model(config: PromptEvalConfig):
@@ -311,6 +318,8 @@ def evaluate_prompt(config: PromptEvalConfig) -> dict:
                 "adapter_path": str(config.adapter_path) if config.adapter_path else None,
                 "instruction_source": "none"
                 if not config.include_instruction
+                else "icl_examples"
+                if config.icl_examples
                 else "cli"
                 if config.instruction is not None
                 else "dataset_instruction_text",
@@ -354,6 +363,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
     parser.add_argument("--validator", default=None, help="Override task validation by registered validator name; default is task-specific.")
+    parser.add_argument("--icl-examples", type=int, default=0, help="Use N train input-output pairs in place of instruction text.")
+    parser.add_argument("--icl-split", default="train")
     return parser.parse_args()
 
 
@@ -384,6 +395,8 @@ def main() -> None:
             append_eos=not args.no_append_eos,
             validator=args.validator,
             adapter_path=args.adapter_path,
+            icl_examples=args.icl_examples,
+            icl_split=args.icl_split,
         )
     )
     print(json.dumps({key: summary[key] for key in ("teacher_forced", "autoregressive")}, indent=2))

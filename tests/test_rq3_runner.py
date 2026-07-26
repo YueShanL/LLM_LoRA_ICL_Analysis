@@ -136,6 +136,30 @@ class RQ3RunnerTests(unittest.TestCase):
             self.assertEqual(seen[0].layer, 21)
             self.assertEqual(seen[0].patch_span, "text")
 
+    def test_explicit_layers_run_multiple_patches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = run_rq3.RQ3Config(
+                run_dir=root,
+                model_name="model",
+                dataset_path=root / "data",
+                adapter_path=root / "adapter",
+                source_condition="base",
+                target_condition="lora_only",
+                layers=[2, 24, 38],
+            )
+            seen = []
+
+            with (
+                patch.object(run_rq3, "run_activation_patching", lambda patch_config: seen.append(patch_config)),
+                patch.object(run_rq3, "visualize", lambda _visualize_config: None),
+            ):
+                run_rq3.run_rq3(config)
+
+            self.assertEqual([patch.layer for patch in seen], [2, 24, 38])
+            rq3_config = json.loads((root / "rq3_config.json").read_text(encoding="utf-8"))
+            self.assertEqual(rq3_config["active_layers"], [2, 24, 38])
+
 
 if __name__ == "__main__":
     unittest.main()

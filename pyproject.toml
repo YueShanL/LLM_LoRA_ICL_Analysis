@@ -19,6 +19,9 @@ train = [
   "peft>=0.10.0",
   "trl>=0.8.0",
 ]
+jlens = [
+  "jlens @ git+https://github.com/anthropics/jacobian-lens",
+]
 
 [project.scripts]
 lia-generate-data = "lora_instruction_analysis.data.cli:main"
@@ -29,6 +32,10 @@ lia-validate-task = "lora_instruction_analysis.model.task_acceptance:main"
 lia-generate-format-targets = "lora_instruction_analysis.model.format_targets:main"
 lia-collect-states = "lora_instruction_analysis.model.collect:main"
 lia-visualize-states = "lora_instruction_analysis.model.visualize:main"
+lia-fit-jlens = "lora_instruction_analysis.model.jlens_fit:main"
+lia-jlens-readout = "lora_instruction_analysis.model.jlens_readout:main"
+lia-fit-sae = "lora_instruction_analysis.model.sae_fit:main"
+lia-sae-analysis = "lora_instruction_analysis.model.sae_analysis:main"
 lia-run-lora = "lora_instruction_analysis.experiment.run_lora:main"
 lia-run-rq1 = "lora_instruction_analysis.experiment.run_rq1:main"
 lia-run-rq2 = "lora_instruction_analysis.experiment.run_rq2:main"

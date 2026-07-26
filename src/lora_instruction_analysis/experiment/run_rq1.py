@@ -9,6 +9,8 @@ from pathlib import Path
 
 from lora_instruction_analysis.model.collect import CONDITIONS, CollectConfig, collect
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
+from lora_instruction_analysis.model.jlens_readout import run_jlens_readout
+from lora_instruction_analysis.model.sae_analysis import run_sae_analysis
 from lora_instruction_analysis.model.visualize import VisualizeConfig, visualize
 
 
@@ -27,6 +29,14 @@ class RQ1Config:
     plots_dir: Path | None = None
     prompt_format: str = "raw"
     append_eos: bool = True
+    icl_examples: int = 0
+    icl_split: str = "train"
+    run_jlens_readout: bool = False
+    jlens_path: Path | None = None
+    jlens_top_k: int = 20
+    run_sae_analysis: bool = False
+    sae_path: Path | None = None
+    sae_top_k: int = 20
 
     @property
     def resolved_states_dir(self) -> Path:
@@ -57,12 +67,20 @@ def _infer_config(args: argparse.Namespace) -> RQ1Config:
         plots_dir=args.plots_dir,
         prompt_format=getattr(args, "prompt_format", None) or run_config.get("prompt_format", "raw"),
         append_eos=False if getattr(args, "no_append_eos", False) else bool(run_config.get("append_eos", True)),
+        icl_examples=int(getattr(args, "icl_examples", 0) or 0),
+        icl_split=getattr(args, "icl_split", "train"),
+        run_jlens_readout=bool(getattr(args, "run_jlens_readout", False)),
+        jlens_path=getattr(args, "jlens_path", None),
+        jlens_top_k=int(getattr(args, "jlens_top_k", 20)),
+        run_sae_analysis=bool(getattr(args, "run_sae_analysis", False)),
+        sae_path=getattr(args, "sae_path", None),
+        sae_top_k=int(getattr(args, "sae_top_k", 20)),
     )
 
 
 def _jsonable(config: RQ1Config) -> dict:
     data = asdict(config)
-    for key in ("run_dir", "dataset_path", "adapter_path", "states_dir", "plots_dir"):
+    for key in ("run_dir", "dataset_path", "adapter_path", "states_dir", "plots_dir", "jlens_path", "sae_path"):
         if data[key] is not None:
             data[key] = str(data[key])
     data["resolved_states_dir"] = str(config.resolved_states_dir)
@@ -92,6 +110,8 @@ def run_rq1(config: RQ1Config) -> None:
             device=config.device,
             prompt_format=config.prompt_format,
             append_eos=config.append_eos,
+            icl_examples=config.icl_examples,
+            icl_split=config.icl_split,
         )
     )
     visualize(
@@ -105,6 +125,26 @@ def run_rq1(config: RQ1Config) -> None:
             mode="residual",
         )
     )
+    if config.run_jlens_readout:
+        if config.jlens_path is None:
+            raise ValueError("--jlens-path is required when --run-jlens-readout is set.")
+        run_jlens_readout(
+            config.resolved_states_dir,
+            config.jlens_path,
+            config.run_dir / "plots" / "rq1_jlens",
+            top_k=config.jlens_top_k,
+            model_name=config.model_name,
+        )
+    if config.run_sae_analysis:
+        if config.sae_path is None:
+            raise ValueError("--sae-path is required when --run-sae-analysis is set.")
+        run_sae_analysis(
+            config.resolved_states_dir,
+            config.sae_path,
+            config.run_dir / "plots" / "rq1_sae",
+            mode="residual",
+            top_k=config.sae_top_k,
+        )
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,6 +162,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plots-dir", type=Path)
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--icl-examples", type=int, default=0)
+    parser.add_argument("--icl-split", default="train")
+    parser.add_argument("--run-jlens-readout", action="store_true")
+    parser.add_argument("--jlens-path", type=Path)
+    parser.add_argument("--jlens-top-k", type=int, default=20)
+    parser.add_argument("--run-sae-analysis", action="store_true")
+    parser.add_argument("--sae-path", type=Path)
+    parser.add_argument("--sae-top-k", type=int, default=20)
     return parser.parse_args()
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from lora_instruction_analysis.model.collect import CONDITIONS, CollectConfig, collect
 from lora_instruction_analysis.model.formatting import PROMPT_FORMATS
+from lora_instruction_analysis.model.sae_analysis import run_sae_analysis
 from lora_instruction_analysis.model.visualize import (
     ATTENTION_ALIGNMENT_STRATEGY,
     ATTENTION_OUTPUT_DELTA_DEFINITION,
@@ -38,6 +39,11 @@ class RQ2Config:
     collect_attention_outputs: bool = False
     prompt_format: str = "raw"
     append_eos: bool = True
+    icl_examples: int = 0
+    icl_split: str = "train"
+    run_sae_analysis: bool = False
+    sae_path: Path | None = None
+    sae_top_k: int = 20
 
     @property
     def resolved_states_dir(self) -> Path:
@@ -69,12 +75,17 @@ def _infer_config(args: argparse.Namespace, *, rq_name: str = "rq2") -> RQ2Confi
         rq_name=rq_name,
         prompt_format=getattr(args, "prompt_format", None) or run_config.get("prompt_format", "raw"),
         append_eos=False if getattr(args, "no_append_eos", False) else bool(run_config.get("append_eos", True)),
+        icl_examples=int(getattr(args, "icl_examples", 0) or 0),
+        icl_split=getattr(args, "icl_split", "train"),
+        run_sae_analysis=bool(getattr(args, "run_sae_analysis", False)),
+        sae_path=getattr(args, "sae_path", None),
+        sae_top_k=int(getattr(args, "sae_top_k", 20)),
     )
 
 
 def _jsonable(config: RQ2Config) -> dict:
     data = asdict(config)
-    for key in ("run_dir", "dataset_path", "adapter_path", "states_dir", "plots_dir"):
+    for key in ("run_dir", "dataset_path", "adapter_path", "states_dir", "plots_dir", "sae_path"):
         if data[key] is not None:
             data[key] = str(data[key])
     data["resolved_states_dir"] = str(config.resolved_states_dir)
@@ -115,6 +126,8 @@ def run_rq2(config: RQ2Config) -> None:
             collect_attention_outputs=config.collect_attention_outputs,
             prompt_format=config.prompt_format,
             append_eos=config.append_eos,
+            icl_examples=config.icl_examples,
+            icl_split=config.icl_split,
         )
     )
     required_keys = ("source_alignment",) + (
@@ -195,6 +208,25 @@ def run_rq2(config: RQ2Config) -> None:
                 mode="attention_head_ablation",
             )
         )
+        if config.run_sae_analysis:
+            if config.sae_path is None:
+                raise ValueError("--sae-path is required when --run-sae-analysis is set.")
+            run_sae_analysis(
+                config.resolved_states_dir,
+                config.sae_path,
+                config.resolved_plots_dir / "attention_outputs_sae",
+                mode="attention_outputs",
+                top_k=config.sae_top_k,
+            )
+            run_sae_analysis(
+                config.resolved_states_dir,
+                config.sae_path,
+                config.resolved_plots_dir / "attention_post_o_proj_outputs_sae",
+                mode="attention_post_o_proj_outputs",
+                top_k=config.sae_top_k,
+            )
+    elif config.run_sae_analysis:
+        raise ValueError("--run-sae-analysis for RQ2 requires attention outputs; run RQ2.1 or set collect_attention_outputs.")
 
 
 def _require_tensor_keys(states_dir: Path, required_keys: tuple[str, ...]) -> None:
@@ -228,6 +260,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plots-dir", type=Path)
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--icl-examples", type=int, default=0)
+    parser.add_argument("--icl-split", default="train")
+    parser.add_argument("--run-sae-analysis", action="store_true")
+    parser.add_argument("--sae-path", type=Path)
+    parser.add_argument("--sae-top-k", type=int, default=20)
     return parser.parse_args()
 
 

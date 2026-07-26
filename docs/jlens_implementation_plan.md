@@ -115,8 +115,11 @@ Minimum CLI:
 ```text
 --model-name
 --output-dir
---fit-corpus
---validation-corpus
+--dataset-name
+--dataset-config
+--dataset-split train
+--validation-split validation
+--text-column text
 --num-sequences 100
 --validation-sequences 50
 --sequence-length 128
@@ -131,8 +134,6 @@ Output:
 experiments/{run_id}/jlens/base_model/
   lens/
   config.json
-  fit_corpus_snapshot.jsonl
-  validation_corpus_snapshot.jsonl
   validation_summary.json
 ```
 
@@ -141,9 +142,11 @@ experiments/{run_id}/jlens/base_model/
 - model name
 - checkpoint or revision if available
 - tokenizer name
-- fit corpus path/name
-- fit sample ids or row offsets
-- validation sample ids or row offsets
+- Hugging Face dataset name/config
+- fit and validation split names
+- text column
+- fit sample row indices
+- validation sample row indices
 - sequence length
 - number of fit sequences
 - number of validation sequences

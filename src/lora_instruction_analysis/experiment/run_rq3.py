@@ -37,6 +37,7 @@ class RQ3Config:
     source_condition: str | None = None
     target_condition: str | None = None
     layer: int | None = None
+    layers: list[int] | None = None
     split: str = "test"
     max_samples: int | None = None
     seed: int = 13
@@ -49,6 +50,9 @@ class RQ3Config:
     prompt_format: str = "raw"
     append_eos: bool = True
     validator: ValidationSelector = None
+    icl_examples: int = 0
+    icl_split: str = "train"
+    block_path: str | None = None
 
     @property
     def resolved_output_dir(self) -> Path:
@@ -67,7 +71,9 @@ def _patch_specs(config: RQ3Config) -> list[tuple[str, str, int]]:
         if config.source_condition is not None and config.target_condition is not None
         else list(DEFAULT_PATCH_PAIRS)
     )
-    layers = [config.layer] if config.layer is not None else list(DEFAULT_LAYERS)
+    if config.layer is not None and config.layers is not None:
+        raise ValueError("layer and layers cannot both be provided.")
+    layers = config.layers if config.layers is not None else ([config.layer] if config.layer is not None else list(DEFAULT_LAYERS))
     return [(source, target, layer) for source, target in pairs for layer in layers]
 
 
@@ -98,6 +104,7 @@ def _infer_config(args: argparse.Namespace) -> RQ3Config:
         source_condition=args.source_condition,
         target_condition=args.target_condition,
         layer=args.layer,
+        layers=getattr(args, "layers", None),
         split=args.split,
         max_samples=args.max_samples,
         seed=args.seed if args.seed is not None else int(run_config.get("seed", 13)),
@@ -110,6 +117,9 @@ def _infer_config(args: argparse.Namespace) -> RQ3Config:
         prompt_format=getattr(args, "prompt_format", None) or run_config.get("prompt_format", "raw"),
         append_eos=False if getattr(args, "no_append_eos", False) else bool(run_config.get("append_eos", True)),
         validator=getattr(args, "validator", None),
+        icl_examples=int(getattr(args, "icl_examples", 0) or 0),
+        icl_split=getattr(args, "icl_split", "train"),
+        block_path=getattr(args, "block_path", None),
     )
 
 
@@ -126,6 +136,7 @@ def _jsonable(config: RQ3Config) -> dict:
     data["status_reason"] = "RQ3 has controls, generation metrics, semantic task scoring, and shape checks; activation-site sweep is still pending."
     data["default_patch_pairs"] = [list(pair) for pair in DEFAULT_PATCH_PAIRS]
     data["default_layers"] = list(DEFAULT_LAYERS)
+    data["active_layers"] = config.layers if config.layers is not None else ([config.layer] if config.layer is not None else list(DEFAULT_LAYERS))
     data["controls"] = list(RQ3_CONTROLS)
     data["patch_runs"] = [
         {
@@ -187,6 +198,9 @@ def run_rq3(config: RQ3Config) -> None:
                 prompt_format=config.prompt_format,
                 append_eos=config.append_eos,
                 validator=resolved_validator,
+                icl_examples=config.icl_examples,
+                icl_split=config.icl_split,
+                block_path=config.block_path,
             )
         )
     visualize(
@@ -222,6 +236,10 @@ def _default_max_new_tokens(dataset_path: Path, split: str) -> int:
     return get_task(next(iter(task_ids))).max_generate_tokens or 20
 
 
+def _parse_layers(value: str) -> list[int]:
+    return [int(item.strip()) for item in value.split(",") if item.strip()]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run RQ3 activation patching for a LoRA run.")
     parser.add_argument("--run-dir", type=Path, required=True, help="LoRA run directory with config.json.")
@@ -231,6 +249,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-condition")
     parser.add_argument("--target-condition")
     parser.add_argument("--layer", type=int)
+    parser.add_argument("--layers", type=_parse_layers)
     parser.add_argument("--split", default="test")
     parser.add_argument("--max-samples", type=int)
     parser.add_argument("--seed", type=int)
@@ -243,6 +262,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS)
     parser.add_argument("--no-append-eos", action="store_true")
     parser.add_argument("--validator", default=None, help="Override task validation: task_default, exact, single_token, integer, or yes_no.")
+    parser.add_argument("--icl-examples", type=int, default=0)
+    parser.add_argument("--icl-split", default="train")
+    parser.add_argument("--block-path")
     return parser.parse_args()
 
 

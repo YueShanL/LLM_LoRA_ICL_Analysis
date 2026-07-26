@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import fnmatch
 import inspect
 import json
 from pathlib import Path
@@ -82,6 +83,19 @@ def _infer_target_modules(model) -> tuple[str, ...]:
     return ("q_proj", "k_proj", "v_proj")
 
 
+def _resolve_target_modules(model, target_modules: tuple[str, ...]) -> tuple[str, ...]:
+    if target_modules == ("auto",):
+        return _infer_target_modules(model)
+    patterns = [item for item in target_modules if "*" in item or "?" in item]
+    if not patterns:
+        return target_modules
+    resolved = [name for name, _module in model.named_modules() if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)]
+    resolved.extend(item for item in target_modules if item not in patterns)
+    if not resolved:
+        raise ValueError(f"No LoRA target modules matched patterns: {', '.join(patterns)}")
+    return tuple(dict.fromkeys(resolved))
+
+
 def _load_model_and_tokenizer(config: TrainConfig):
     try:
         import torch
@@ -152,9 +166,7 @@ def train_lora(config: TrainConfig) -> None:
 
     set_seed(config.seed)
     model, tokenizer = _load_model_and_tokenizer(config)
-    target_modules = (
-        _infer_target_modules(model) if config.target_modules == ("auto",) else config.target_modules
-    )
+    target_modules = _resolve_target_modules(model, config.target_modules)
     model = get_peft_model(
         model,
         LoraConfig(

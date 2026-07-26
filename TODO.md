@@ -65,8 +65,8 @@ Boundary: reads collect artifacts and computes RQ1 residual similarity. Does not
 
 - [x] Add CKA and logit-distribution similarity once target alignment artifacts are present.
 - [x] Add box-plot visualization and CSV summaries for CKA and logit-distribution similarity.
-- [ ] Add RQ1 J-lens readouts for residual-stream states: compare `base`, `instruction_only`, and `lora_only` top-token/concept trajectories by layer and target/input position. Treat J-lens as an RQ1 interpretive readout, not an RQ2 attention metric.
-- [ ] Add RQ1 SAE feature analysis for residual-stream perturbations: encode `instruction_only - base` and `lora_only - base`, then report sparse-feature overlap, feature-activation cosine, and task-success correlations.
+- [x] Add RQ1 J-lens readouts for residual-stream states: compare `base`, `instruction_only`, and `lora_only` top-token/concept trajectories by layer and target/input position. Treat J-lens as an RQ1 interpretive readout, not an RQ2 attention metric.
+- [x] Add RQ1 SAE feature analysis for residual-stream perturbations: encode `instruction_only - base` and `lora_only - base`, then report sparse-feature overlap, feature-activation cosine, and task-success correlations.
 - [ ] Add delta-based functional subspace visualizations for LoRA-vs-instruction convergence:
   - [x] Plot layerwise principal-angle / subspace-cosine similarity between top-k PCA bases of `instruction_only - base` and `lora_only - base`.
   - [x] Plot final-layer PCA of residual deltas, colored by condition and shaped/annotated by task in combined views.
@@ -83,7 +83,7 @@ Boundary: reads collect artifacts and computes RQ2 attention pattern / head outp
 - [x] Add post-`o_proj` attention-output comparison so RQ2 pre-`o_proj` head outputs can be checked against the block-level representation used by RQ1.
 - [x] Add delta-based attention-output comparison (`condition - base`) so raw activation similarity is not mixed with perturbation similarity.
 - [x] Implement head ablation impact as a separate output from attention similarity.
-- [ ] Add RQ2 SAE feature analysis for attention-side vectors: train or load SAEs for pre-`o_proj` head outputs and/or post-`o_proj` attention outputs, then compare `instruction_only` and `lora_only` sparse features and feature deltas. Keep this separate from J-lens, which belongs to RQ1 residual readout.
+- [x] Add RQ2 SAE feature analysis for attention-side vectors: train or load SAEs for pre-`o_proj` head outputs and/or post-`o_proj` attention outputs, then compare `instruction_only` and `lora_only` sparse features and feature deltas. Keep this separate from J-lens, which belongs to RQ1 residual readout.
 
 ## 6. ActivationPatchingModule
 
