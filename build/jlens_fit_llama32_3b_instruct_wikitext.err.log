@@ -1,0 +1,15 @@
+Generating test split:   0%|          | 0/4358 [00:00<?, ? examples/s]Generating test split: 100%|¨€¨€¨€¨€¨€¨€¨€¨€¨€¨€| 4358/4358 [00:00<00:00, 135145.08 examples/s]
+Generating train split:   0%|          | 0/1801350 [00:00<?, ? examples/s]Generating train split:  13%|¨€¨†        | 233000/1801350 [00:00<00:00, 2305579.34 examples/s]Generating train split:  32%|¨€¨€¨€¨‡      | 570000/1801350 [00:00<00:00, 2891351.11 examples/s]Generating train split:  52%|¨€¨€¨€¨€¨€¨‡    | 941675/1801350 [00:00<00:00, 2657587.70 examples/s]Generating train split:  71%|¨€¨€¨€¨€¨€¨€¨€   | 1273675/1801350 [00:00<00:00, 2876006.10 examples/s]Generating train split:  88%|¨€¨€¨€¨€¨€¨€¨€¨€¨‚ | 1578675/1801350 [00:00<00:00, 2932667.59 examples/s]Generating train split: 100%|¨€¨€¨€¨€¨€¨€¨€¨€¨€¨€| 1801350/1801350 [00:00<00:00, 2871445.10 examples/s]
+Generating validation split:   0%|          | 0/3760 [00:00<?, ? examples/s]Generating validation split: 100%|¨€¨€¨€¨€¨€¨€¨€¨€¨€¨€| 3760/3760 [00:00<00:00, 491831.69 examples/s]
+Traceback (most recent call last):
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "C:\Users\User\AppData\Local\Programs\Python\Python310\lib\runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "E:\IdeaProject\Pycharm\LoRA_Instruction_analysis\src\lora_instruction_analysis\model\jlens_fit.py", line 181, in <module>
+    main()
+  File "E:\IdeaProject\Pycharm\LoRA_Instruction_analysis\src\lora_instruction_analysis\model\jlens_fit.py", line 162, in main
+    fit_jlens(
+  File "E:\IdeaProject\Pycharm\LoRA_Instruction_analysis\src\lora_instruction_analysis\model\jlens_fit.py", line 101, in fit_jlens
+    lens = jlens.fit(  # type: ignore[attr-defined]
+TypeError: fit() got an unexpected keyword argument 'model_name'

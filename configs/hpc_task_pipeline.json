@@ -1,0 +1,139 @@
+{
+  "run_group_id": "hpc_lora_tasks_20260719",
+  "output_root": "experiments",
+  "model_name": "meta-llama/Llama-3.2-3B-Instruct",
+  "task_ids": [
+    "last_word",
+    "word_count",
+    "uppercase_last_word"
+  ],
+  "source_id": "wikitext",
+  "seed": 13,
+  "instruction_mode": {
+    "mode": "prompt",
+    "icl_examples": 5,
+    "icl_split": "train"
+  },
+  "stages": {
+    "data": {
+      "enabled": true,
+      "train_size": 800,
+      "validation_size": 100,
+      "test_size": 100,
+      "max_source_rows": 5000,
+      "min_words": 4,
+      "max_words": 32,
+      "include_instruction_in_prompt": false,
+      "streaming": false,
+      "write_csv": true,
+      "write_hf_dataset": true
+    },
+    "lora": {
+      "enabled": true,
+      "rank": 8,
+      "epochs": 3.0,
+      "learning_rate": 0.0002,
+      "train_batch_size": 2,
+      "eval_batch_size": 2,
+      "gradient_accumulation_steps": 8,
+      "max_length": 512,
+      "lora_alpha": 16,
+      "lora_dropout": 0.05,
+      "target_modules": [
+        "auto"
+      ],
+      "fp16": false,
+      "bf16": true,
+      "qlora": false,
+      "device_map": "auto",
+      "prompt_format": "raw",
+      "append_eos": true
+    },
+    "prompt_eval": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "max_length": 512,
+      "generation_extra_tokens": 128,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "prompt_format": "raw",
+      "append_eos": true,
+      "runs": [
+        {
+          "name": "instruction_only",
+          "include_instruction": true,
+          "adapter": false
+        },
+        {
+          "name": "no_instruction",
+          "include_instruction": false,
+          "adapter": false
+        },
+        {
+          "name": "lora_with_instruction",
+          "include_instruction": true,
+          "adapter": true
+        }
+      ]
+    },
+    "jlens_fit": {
+      "enabled": true,
+      "output_dir": "experiments/jlens_hpc_lora_tasks_20260719",
+      "dataset_name": "Salesforce/wikitext",
+      "dataset_config": "wikitext-2-raw-v1",
+      "dataset_split": "train",
+      "validation_split": null,
+      "text_column": "text",
+      "num_sequences": 100,
+      "validation_sequences": 50,
+      "sequence_length": 128,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "dim_batch": 8,
+      "skip_first": 16,
+      "checkpoint_every": 1
+    },
+    "rq1": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "run_jlens_readout": true,
+      "jlens_top_k": 20
+    },
+    "rq2": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda"
+    },
+    "rq21": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda"
+    },
+    "rq3": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "source_condition": null,
+      "target_condition": null,
+      "layer": null,
+      "max_new_tokens": null,
+      "patch_span": "text",
+      "validator": null
+    },
+    "cross_task_visualization": {
+      "enabled": true,
+      "output_dir": null,
+      "acceptance_root": null
+    }
+  }
+}

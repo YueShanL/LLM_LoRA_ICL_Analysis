@@ -1,0 +1,9 @@
+[skip] jlens_fit
+[skip] data last_word
+[skip] lora last_word
+[skip] prompt_eval last_word/instruction_only
+[skip] prompt_eval last_word/no_instruction
+[skip] prompt_eval last_word/lora_with_instruction
+[skip] rq1 last_word
+[skip] rq2 last_word
+[skip] rq21 last_word

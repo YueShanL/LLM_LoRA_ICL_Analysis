@@ -1,0 +1,131 @@
+2026-07-19 12:48:36,537 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-07-19 12:48:36,559 INFO httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/Salesforce/wikitext/b08601e04326c79dfdd32d625aee71d232d685c3/README.md "HTTP/1.1 200 OK"
+2026-07-19 12:48:36,803 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext.py "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:37,535 INFO httpx: HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/Salesforce/wikitext/Salesforce/wikitext.py "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:37,886 INFO httpx: HTTP Request: GET https://huggingface.co/api/datasets/Salesforce/wikitext/revision/b08601e04326c79dfdd32d625aee71d232d685c3 "HTTP/1.1 200 OK"
+2026-07-19 12:48:38,137 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:38,472 INFO httpx: HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=Salesforce/wikitext "HTTP/1.1 200 OK"
+2026-07-19 12:48:38,753 INFO httpx: HTTP Request: GET https://huggingface.co/api/datasets/Salesforce/wikitext/tree/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-103-raw-v1?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-07-19 12:48:39,003 INFO httpx: HTTP Request: GET https://huggingface.co/api/datasets/Salesforce/wikitext/tree/b08601e04326c79dfdd32d625aee71d232d685c3?recursive=false&expand=false "HTTP/1.1 200 OK"
+2026-07-19 12:48:39,253 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:39,541 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect"
+2026-07-19 12:48:39,560 INFO httpx: HTTP Request: HEAD https://huggingface.co/api/resolve-cache/datasets/Salesforce/wikitext/b08601e04326c79dfdd32d625aee71d232d685c3/README.md "HTTP/1.1 200 OK"
+2026-07-19 12:48:39,809 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext.py "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:40,047 INFO httpx: HTTP Request: HEAD https://s3.amazonaws.com/datasets.huggingface.co/datasets/datasets/Salesforce/wikitext/Salesforce/wikitext.py "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:40,300 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/.huggingface.yaml "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:40,565 INFO httpx: HTTP Request: GET https://datasets-server.huggingface.co/info?dataset=Salesforce/wikitext "HTTP/1.1 200 OK"
+2026-07-19 12:48:40,815 INFO httpx: HTTP Request: HEAD https://huggingface.co/datasets/Salesforce/wikitext/resolve/b08601e04326c79dfdd32d625aee71d232d685c3/dataset_infos.json "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:41,765 INFO httpx: HTTP Request: HEAD https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/resolve/main/config.json "HTTP/1.1 200 OK"
+2026-07-19 12:48:42,640 INFO httpx: HTTP Request: HEAD https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 200 OK"
+2026-07-19 12:48:42,898 INFO httpx: HTTP Request: GET https://huggingface.co/api/models/meta-llama/Llama-3.2-3B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+2026-07-19 12:48:43,148 INFO httpx: HTTP Request: GET https://huggingface.co/api/models/meta-llama/Llama-3.2-3B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+2026-07-19 12:48:44,078 INFO httpx: HTTP Request: GET https://huggingface.co/api/models/meta-llama/Llama-3.2-3B-Instruct "HTTP/1.1 200 OK"
+2026-07-19 12:48:44,340 INFO httpx: HTTP Request: HEAD https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/resolve/main/config.json "HTTP/1.1 200 OK"
+[transformers] `torch_dtype` is deprecated! Use `dtype` instead!
+2026-07-19 12:48:44,750 INFO httpx: HTTP Request: HEAD https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/resolve/main/config.json "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/254 [00:00<?, ?it/s]Loading weights:  28%|¨€¨€¨‚       | 71/254 [00:00<00:00, 700.04it/s]Loading weights:  56%|¨€¨€¨€¨€¨€¨„    | 142/254 [00:00<00:00, 628.78it/s]Loading weights:  81%|¨€¨€¨€¨€¨€¨€¨€¨€  | 206/254 [00:00<00:00, 559.66it/s]Loading weights: 100%|¨€¨€¨€¨€¨€¨€¨€¨€¨€¨€| 254/254 [00:00<00:00, 677.62it/s]
+2026-07-19 12:48:45,694 INFO httpx: HTTP Request: HEAD https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct/resolve/main/generation_config.json "HTTP/1.1 200 OK"
+2026-07-19 12:49:03,358 INFO jlens.fitting: fit: n_layers=28 d_model=3072, fitting 27 source layers (target=L27) on 100 prompts
+2026-07-19 12:49:03,640 WARNING jlens.fitting:   skipping prompt 0: prompt too short: seq_len=12, need > 17 tokens
+E:\IdeaProject\Pycharm\LoRA_Instruction_analysis\venv\lib\site-packages\torch\autograd\graph.py:869: UserWarning: Attempting to run cuBLAS, but there was no current CUDA context! Attempting to set the primary context... (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\pytorch\aten\src\ATen\cuda\CublasHandlePool.cpp:335.)
+  return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
+2026-07-19 12:49:34,283 INFO jlens.fitting:   prompt 2/100  seq_len=128 n_valid=111  31s  max||J||/sqrt(d)=1.934  max_d_mean=nan
+2026-07-19 12:50:07,182 INFO jlens.fitting:   prompt 3/100  seq_len=128 n_valid=111  29s  max||J||/sqrt(d)=3.062  max_d_mean=8.55e-01
+2026-07-19 12:50:25,893 INFO jlens.fitting:   prompt 4/100  seq_len=44 n_valid=27  15s  max||J||/sqrt(d)=2.268  max_d_mean=4.85e-01
+2026-07-19 12:50:28,919 WARNING jlens.fitting:   skipping prompt 4: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 12:50:57,174 INFO jlens.fitting:   prompt 6/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=3.090  max_d_mean=5.03e-01
+2026-07-19 12:51:00,297 WARNING jlens.fitting:   skipping prompt 6: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 12:51:00,298 WARNING jlens.fitting:   skipping prompt 7: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 12:51:16,327 INFO jlens.fitting:   prompt 9/100  seq_len=53 n_valid=36  16s  max||J||/sqrt(d)=2.254  max_d_mean=3.37e-01
+2026-07-19 12:51:47,873 INFO jlens.fitting:   prompt 10/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.176  max_d_mean=2.74e-01
+2026-07-19 12:52:16,893 INFO jlens.fitting:   prompt 11/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.516  max_d_mean=2.83e-01
+2026-07-19 12:52:45,639 INFO jlens.fitting:   prompt 12/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.869  max_d_mean=2.84e-01
+2026-07-19 12:53:01,595 INFO jlens.fitting:   prompt 13/100  seq_len=46 n_valid=29  15s  max||J||/sqrt(d)=2.477  max_d_mean=2.32e-01
+2026-07-19 12:53:21,774 INFO jlens.fitting:   prompt 14/100  seq_len=72 n_valid=55  19s  max||J||/sqrt(d)=2.097  max_d_mean=1.83e-01
+2026-07-19 12:53:42,175 INFO jlens.fitting:   prompt 15/100  seq_len=73 n_valid=56  19s  max||J||/sqrt(d)=2.610  max_d_mean=2.13e-01
+2026-07-19 12:54:06,804 INFO jlens.fitting:   prompt 16/100  seq_len=83 n_valid=66  22s  max||J||/sqrt(d)=2.144  max_d_mean=1.63e-01
+2026-07-19 12:54:09,930 WARNING jlens.fitting:   skipping prompt 16: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 12:54:37,968 INFO jlens.fitting:   prompt 18/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.306  max_d_mean=1.59e-01
+2026-07-19 12:55:04,130 INFO jlens.fitting:   prompt 19/100  seq_len=94 n_valid=77  23s  max||J||/sqrt(d)=3.759  max_d_mean=2.49e-01
+2026-07-19 12:55:35,525 INFO jlens.fitting:   prompt 20/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.482  max_d_mean=1.39e-01
+2026-07-19 12:56:06,836 INFO jlens.fitting:   prompt 21/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.381  max_d_mean=1.30e-01
+2026-07-19 12:56:29,345 INFO jlens.fitting:   prompt 22/100  seq_len=68 n_valid=51  19s  max||J||/sqrt(d)=2.238  max_d_mean=1.25e-01
+2026-07-19 12:57:01,988 INFO jlens.fitting:   prompt 23/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.321  max_d_mean=1.12e-01
+2026-07-19 12:57:33,002 INFO jlens.fitting:   prompt 24/100  seq_len=117 n_valid=100  28s  max||J||/sqrt(d)=2.910  max_d_mean=1.36e-01
+2026-07-19 12:57:51,265 INFO jlens.fitting:   prompt 25/100  seq_len=36 n_valid=19  15s  max||J||/sqrt(d)=6.913  max_d_mean=3.26e-01
+2026-07-19 12:57:54,652 WARNING jlens.fitting:   skipping prompt 25: prompt too short: seq_len=7, need > 17 tokens
+2026-07-19 12:58:22,849 INFO jlens.fitting:   prompt 27/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.283  max_d_mean=9.31e-02
+2026-07-19 12:58:26,230 WARNING jlens.fitting:   skipping prompt 27: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 12:58:26,230 WARNING jlens.fitting:   skipping prompt 28: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 12:58:26,231 WARNING jlens.fitting:   skipping prompt 29: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 12:58:54,477 INFO jlens.fitting:   prompt 31/100  seq_len=128 n_valid=111  28s  max||J||/sqrt(d)=2.286  max_d_mean=8.97e-02
+2026-07-19 12:59:25,430 INFO jlens.fitting:   prompt 32/100  seq_len=116 n_valid=99  27s  max||J||/sqrt(d)=2.819  max_d_mean=1.06e-01
+2026-07-19 12:59:43,090 INFO jlens.fitting:   prompt 33/100  seq_len=23 n_valid=6  14s  max||J||/sqrt(d)=2.431  max_d_mean=1.00e-01
+2026-07-19 12:59:46,201 WARNING jlens.fitting:   skipping prompt 33: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 12:59:46,201 WARNING jlens.fitting:   skipping prompt 34: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:00:17,440 INFO jlens.fitting:   prompt 36/100  seq_len=128 n_valid=111  31s  max||J||/sqrt(d)=3.482  max_d_mean=1.26e-01
+2026-07-19 13:00:35,065 INFO jlens.fitting:   prompt 37/100  seq_len=24 n_valid=7  14s  max||J||/sqrt(d)=5.573  max_d_mean=2.04e-01
+2026-07-19 13:01:13,516 INFO jlens.fitting:   prompt 38/100  seq_len=128 n_valid=111  35s  max||J||/sqrt(d)=2.582  max_d_mean=8.33e-02
+2026-07-19 13:01:40,145 INFO jlens.fitting:   prompt 39/100  seq_len=71 n_valid=54  23s  max||J||/sqrt(d)=2.046  max_d_mean=6.96e-02
+2026-07-19 13:02:19,197 INFO jlens.fitting:   prompt 40/100  seq_len=128 n_valid=111  35s  max||J||/sqrt(d)=2.488  max_d_mean=8.19e-02
+2026-07-19 13:02:59,029 INFO jlens.fitting:   prompt 41/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.925  max_d_mean=8.71e-02
+2026-07-19 13:03:38,550 INFO jlens.fitting:   prompt 42/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.921  max_d_mean=8.45e-02
+2026-07-19 13:04:18,245 INFO jlens.fitting:   prompt 43/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=1.886  max_d_mean=5.35e-02
+2026-07-19 13:04:58,073 INFO jlens.fitting:   prompt 44/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=4.566  max_d_mean=1.31e-01
+2026-07-19 13:05:02,072 WARNING jlens.fitting:   skipping prompt 44: prompt too short: seq_len=11, need > 17 tokens
+2026-07-19 13:05:38,029 INFO jlens.fitting:   prompt 46/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.282  max_d_mean=6.01e-02
+2026-07-19 13:05:41,596 WARNING jlens.fitting:   skipping prompt 46: prompt too short: seq_len=7, need > 17 tokens
+2026-07-19 13:06:17,766 INFO jlens.fitting:   prompt 48/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=3.034  max_d_mean=8.22e-02
+2026-07-19 13:06:54,775 INFO jlens.fitting:   prompt 49/100  seq_len=99 n_valid=82  33s  max||J||/sqrt(d)=1.876  max_d_mean=4.99e-02
+2026-07-19 13:07:31,514 INFO jlens.fitting:   prompt 50/100  seq_len=103 n_valid=86  32s  max||J||/sqrt(d)=2.357  max_d_mean=6.06e-02
+2026-07-19 13:07:34,926 WARNING jlens.fitting:   skipping prompt 50: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 13:08:10,909 INFO jlens.fitting:   prompt 52/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.654  max_d_mean=6.48e-02
+2026-07-19 13:08:14,416 WARNING jlens.fitting:   skipping prompt 52: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 13:08:49,902 INFO jlens.fitting:   prompt 54/100  seq_len=123 n_valid=106  35s  max||J||/sqrt(d)=2.679  max_d_mean=6.81e-02
+2026-07-19 13:08:53,673 WARNING jlens.fitting:   skipping prompt 54: prompt too short: seq_len=8, need > 17 tokens
+2026-07-19 13:09:29,648 INFO jlens.fitting:   prompt 56/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.668  max_d_mean=6.36e-02
+2026-07-19 13:09:33,398 WARNING jlens.fitting:   skipping prompt 56: prompt too short: seq_len=5, need > 17 tokens
+2026-07-19 13:10:08,747 INFO jlens.fitting:   prompt 58/100  seq_len=122 n_valid=105  35s  max||J||/sqrt(d)=3.292  max_d_mean=7.80e-02
+2026-07-19 13:10:48,658 INFO jlens.fitting:   prompt 59/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.670  max_d_mean=5.63e-02
+2026-07-19 13:11:28,813 INFO jlens.fitting:   prompt 60/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=3.236  max_d_mean=6.96e-02
+2026-07-19 13:11:33,185 WARNING jlens.fitting:   skipping prompt 60: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:12:09,557 INFO jlens.fitting:   prompt 62/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=1.946  max_d_mean=4.25e-02
+2026-07-19 13:12:13,303 WARNING jlens.fitting:   skipping prompt 62: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 13:12:13,305 WARNING jlens.fitting:   skipping prompt 63: prompt too short: seq_len=7, need > 17 tokens
+2026-07-19 13:12:45,687 INFO jlens.fitting:   prompt 65/100  seq_len=103 n_valid=86  32s  max||J||/sqrt(d)=2.289  max_d_mean=5.08e-02
+2026-07-19 13:13:22,298 INFO jlens.fitting:   prompt 66/100  seq_len=111 n_valid=94  33s  max||J||/sqrt(d)=2.526  max_d_mean=5.29e-02
+2026-07-19 13:13:26,038 WARNING jlens.fitting:   skipping prompt 66: prompt too short: seq_len=5, need > 17 tokens
+2026-07-19 13:14:02,095 INFO jlens.fitting:   prompt 68/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=3.429  max_d_mean=7.04e-02
+2026-07-19 13:14:41,708 INFO jlens.fitting:   prompt 69/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=3.984  max_d_mean=8.08e-02
+2026-07-19 13:15:17,917 INFO jlens.fitting:   prompt 70/100  seq_len=53 n_valid=36  33s  max||J||/sqrt(d)=4.312  max_d_mean=8.64e-02
+2026-07-19 13:15:55,836 INFO jlens.fitting:   prompt 71/100  seq_len=113 n_valid=96  34s  max||J||/sqrt(d)=2.392  max_d_mean=4.48e-02
+2026-07-19 13:15:59,337 WARNING jlens.fitting:   skipping prompt 71: prompt too short: seq_len=4, need > 17 tokens
+2026-07-19 13:16:34,719 INFO jlens.fitting:   prompt 73/100  seq_len=123 n_valid=106  35s  max||J||/sqrt(d)=2.877  max_d_mean=5.14e-02
+2026-07-19 13:16:38,444 WARNING jlens.fitting:   skipping prompt 73: prompt too short: seq_len=8, need > 17 tokens
+2026-07-19 13:16:38,444 WARNING jlens.fitting:   skipping prompt 74: prompt too short: seq_len=8, need > 17 tokens
+2026-07-19 13:16:38,445 WARNING jlens.fitting:   skipping prompt 75: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 13:17:14,376 INFO jlens.fitting:   prompt 77/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.247  max_d_mean=3.99e-02
+2026-07-19 13:17:18,233 WARNING jlens.fitting:   skipping prompt 77: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 13:17:18,235 WARNING jlens.fitting:   skipping prompt 78: prompt too short: seq_len=10, need > 17 tokens
+2026-07-19 13:17:54,250 INFO jlens.fitting:   prompt 80/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.438  max_d_mean=4.50e-02
+2026-07-19 13:18:30,639 INFO jlens.fitting:   prompt 81/100  seq_len=52 n_valid=35  33s  max||J||/sqrt(d)=2.298  max_d_mean=4.17e-02
+2026-07-19 13:18:34,914 WARNING jlens.fitting:   skipping prompt 81: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:19:07,117 INFO jlens.fitting:   prompt 83/100  seq_len=74 n_valid=57  32s  max||J||/sqrt(d)=1.700  max_d_mean=3.14e-02
+2026-07-19 13:19:46,536 INFO jlens.fitting:   prompt 84/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.152  max_d_mean=3.74e-02
+2026-07-19 13:20:26,229 INFO jlens.fitting:   prompt 85/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.963  max_d_mean=4.92e-02
+2026-07-19 13:21:05,576 INFO jlens.fitting:   prompt 86/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.616  max_d_mean=4.46e-02
+2026-07-19 13:21:08,970 WARNING jlens.fitting:   skipping prompt 86: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:21:45,188 INFO jlens.fitting:   prompt 88/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.155  max_d_mean=3.60e-02
+2026-07-19 13:21:48,725 WARNING jlens.fitting:   skipping prompt 88: prompt too short: seq_len=7, need > 17 tokens
+2026-07-19 13:22:20,667 INFO jlens.fitting:   prompt 90/100  seq_len=79 n_valid=62  32s  max||J||/sqrt(d)=2.350  max_d_mean=3.71e-02
+2026-07-19 13:22:24,251 WARNING jlens.fitting:   skipping prompt 90: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:22:24,252 WARNING jlens.fitting:   skipping prompt 91: prompt too short: seq_len=9, need > 17 tokens
+2026-07-19 13:23:00,323 INFO jlens.fitting:   prompt 93/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.937  max_d_mean=4.57e-02
+2026-07-19 13:23:40,595 INFO jlens.fitting:   prompt 94/100  seq_len=128 n_valid=111  36s  max||J||/sqrt(d)=2.128  max_d_mean=3.48e-02
+2026-07-19 13:23:44,446 WARNING jlens.fitting:   skipping prompt 94: prompt too short: seq_len=16, need > 17 tokens
+2026-07-19 13:23:44,450 WARNING jlens.fitting:   skipping prompt 95: prompt too short: seq_len=7, need > 17 tokens
+2026-07-19 13:24:21,630 INFO jlens.fitting:   prompt 97/100  seq_len=128 n_valid=111  37s  max||J||/sqrt(d)=1.770  max_d_mean=2.71e-02
+2026-07-19 13:24:25,530 WARNING jlens.fitting:   skipping prompt 97: prompt too short: seq_len=12, need > 17 tokens
+2026-07-19 13:24:58,229 INFO jlens.fitting:   prompt 99/100  seq_len=60 n_valid=43  33s  max||J||/sqrt(d)=5.226  max_d_mean=8.37e-02
+2026-07-19 13:25:03,146 WARNING jlens.fitting:   skipping prompt 99: prompt too short: seq_len=6, need > 17 tokens
+2026-07-19 13:25:07,131 INFO jlens.fitting: fit: done, 64 prompts
