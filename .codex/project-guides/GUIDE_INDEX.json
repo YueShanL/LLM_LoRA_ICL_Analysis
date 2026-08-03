@@ -1,0 +1,106 @@
+{
+  "dependency_guides": [
+    ".codex/project-guides/dependencies/0.1.0.md",
+    ".codex/project-guides/dependencies/Synthetic.md",
+    ".codex/project-guides/dependencies/datasets.md",
+    ".codex/project-guides/dependencies/jlens.md",
+    ".codex/project-guides/dependencies/lora-instruction-analysis.md",
+    ".codex/project-guides/dependencies/matplotlib.md",
+    ".codex/project-guides/dependencies/peft.md",
+    ".codex/project-guides/dependencies/setuptools.md",
+    ".codex/project-guides/dependencies/setuptools.build_meta.md",
+    ".codex/project-guides/dependencies/src.md",
+    ".codex/project-guides/dependencies/torch.md",
+    ".codex/project-guides/dependencies/transformers.md",
+    ".codex/project-guides/dependencies/trl.md"
+  ],
+  "missing_dependency_guides": [
+    {
+      "name": "0.1.0",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/0.1.0.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "Synthetic",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/Synthetic.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "datasets",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/datasets.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "jlens",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/jlens.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "lora-instruction-analysis",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/lora-instruction-analysis.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "matplotlib",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/matplotlib.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "peft",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/peft.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "setuptools",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/setuptools.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "setuptools.build_meta",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/setuptools.build_meta.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "torch",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/torch.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "transformers",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/transformers.md",
+      "source": "missing",
+      "version": null
+    },
+    {
+      "name": "trl",
+      "needs_subagent": true,
+      "path": ".codex/project-guides/dependencies/trl.md",
+      "source": "missing",
+      "version": null
+    }
+  ],
+  "project_guide": ".codex/project-guides/PROJECT_GUIDE.md",
+  "repository_remotes": [],
+  "schema": "guideweaver.v1"
+}
