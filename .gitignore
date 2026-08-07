@@ -7,7 +7,10 @@ __pycache__/
 .pytest_cache/
 ResidualCache/
 build/
+.cache/
 
 *.log
 *.err
 *.out
+*.slurm
+env_activation
