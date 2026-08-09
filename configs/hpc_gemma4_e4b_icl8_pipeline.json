@@ -22,6 +22,7 @@
   ],
   "source_id": "wikitext",
   "seed": 13,
+  "cleanup_collected_states": false,
   "instruction_mode": {
     "mode": "icl",
     "icl_examples": 8,

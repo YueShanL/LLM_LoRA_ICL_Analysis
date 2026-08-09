@@ -9,6 +9,7 @@
   ],
   "source_id": "wikitext",
   "seed": 13,
+  "cleanup_collected_states": false,
   "instruction_mode": {
     "mode": "prompt",
     "icl_examples": 5,

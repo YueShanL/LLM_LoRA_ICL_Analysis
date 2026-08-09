@@ -6,6 +6,7 @@ import argparse
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -36,6 +37,10 @@ def _stage(config: dict, name: str) -> dict:
 
 def _enabled(config: dict, name: str) -> bool:
     return bool(_stage(config, name).get("enabled", True))
+
+
+def _cleanup_collected_states_enabled(config: dict) -> bool:
+    return bool(config.get("cleanup_collected_states", False))
 
 
 def _instruction_mode(config: dict) -> tuple[int, str]:
@@ -129,6 +134,45 @@ def _done_rq3(run_dir: Path, *, icl_examples: int = 0, icl_split: str = "train",
 def _done_cross_task(output_dir: Path) -> bool:
     combined = output_dir
     return (combined / "rq1_similarity_lines.png").exists() and (combined / "rq3_accuracy_all_tasks.csv").exists()
+
+
+def _cleanup_collected_states(run_dir: Path) -> list[Path]:
+    """Remove raw collection tensors after all task-level analyses have succeeded."""
+    states_root = (run_dir / "states").resolve()
+    if not states_root.is_dir():
+        return []
+
+    removed: list[Path] = []
+    for state_dir in sorted(states_root.iterdir()):
+        tensor_dir = state_dir / "tensors"
+        if not tensor_dir.is_dir() or tensor_dir.is_symlink():
+            continue
+        if tensor_dir.resolve().parent != states_root / state_dir.name:
+            raise RuntimeError(f"Refusing to clean tensor directory outside states root: {tensor_dir}")
+        shutil.rmtree(tensor_dir)
+        removed.append(tensor_dir)
+
+    report = run_dir / "collected_states_cleanup.json"
+    report.write_text(
+        json.dumps(
+            {
+                "status": "complete",
+                "removed": [str(path) for path in removed],
+                "retained": [
+                    "states/*/metrics.jsonl",
+                    "states/*/config.json",
+                    "states/*/dataset_snapshot.jsonl",
+                    "plots/**",
+                    "patches/rq3/**/metrics.jsonl",
+                    "patches/rq3/**/generations.jsonl",
+                ],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return removed
 
 
 def _write_run_config(config: dict, task_id: str) -> None:
@@ -403,6 +447,9 @@ def run_pipeline(config: dict) -> None:
         if _enabled(config, "prompt_eval"):
             run_prompt_eval(config, task_id)
         run_rqs(config, task_id, jlens_path)
+        if _cleanup_collected_states_enabled(config):
+            removed = _cleanup_collected_states(_task_run_dir(config, task_id))
+            print(f"[cleanup] collected states {task_id}: removed {len(removed)} tensor directories", flush=True)
     run_cross_task_visualization(config)
 
 
