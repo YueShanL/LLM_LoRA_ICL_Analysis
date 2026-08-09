@@ -8,6 +8,7 @@ __pycache__/
 ResidualCache/
 build/
 .cache/
+out/
 
 *.log
 *.err
