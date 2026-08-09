@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -41,6 +42,15 @@ def _enabled(config: dict, name: str) -> bool:
 
 def _cleanup_collected_states_enabled(config: dict) -> bool:
     return bool(config.get("cleanup_collected_states", False))
+
+
+def _tmp_dir(config: dict) -> Path:
+    raw = config.get("TMP_DIR") or config.get("tmp_dir") or os.environ.get("TMP_DIR")
+    if not raw:
+        raise ValueError(
+            "cleanup_collected_states=true requires TMP_DIR in the config or TMP_DIR in the environment."
+        )
+    return Path(raw).expanduser()
 
 
 def _instruction_mode(config: dict) -> tuple[int, str]:
@@ -136,6 +146,32 @@ def _done_cross_task(output_dir: Path) -> bool:
     return (combined / "rq1_similarity_lines.png").exists() and (combined / "rq3_accuracy_all_tasks.csv").exists()
 
 
+def _task_complete(config: dict, task_id: str, jlens_path: Path | None) -> bool:
+    run_dir = _task_run_dir(config, task_id)
+    icl_examples, icl_split = _instruction_mode(config)
+    if _enabled(config, "data") and not _done_dataset(run_dir):
+        return False
+    if _enabled(config, "lora") and not _done_lora(_adapter_dir(config, task_id)):
+        return False
+    if _enabled(config, "prompt_eval"):
+        for run in _stage(config, "prompt_eval").get("runs", []):
+            if not _done_prompt_eval(run_dir, run["name"], icl_examples=icl_examples, icl_split=icl_split):
+                return False
+    if _enabled(config, "rq1"):
+        needs_jlens = bool(_stage(config, "rq1").get("run_jlens_readout", False) and jlens_path)
+        if not _done_rq1(run_dir, needs_jlens=needs_jlens, icl_examples=icl_examples, icl_split=icl_split):
+            return False
+    if _enabled(config, "rq2") and not _done_rq2(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+        return False
+    if _enabled(config, "rq21") and not _done_rq21(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+        return False
+    if _enabled(config, "rq3") and not _done_rq3(
+        run_dir, icl_examples=icl_examples, icl_split=icl_split, layers=_stage(config, "rq3").get("layers")
+    ):
+        return False
+    return True
+
+
 def _cleanup_collected_states(run_dir: Path) -> list[Path]:
     """Remove raw collection tensors after all task-level analyses have succeeded."""
     states_root = (run_dir / "states").resolve()
@@ -173,6 +209,85 @@ def _cleanup_collected_states(run_dir: Path) -> list[Path]:
         encoding="utf-8",
     )
     return removed
+
+
+def _task_work_config(config: dict, task_id: str, jlens_path: Path | None) -> dict | None:
+    if not _cleanup_collected_states_enabled(config):
+        return config
+    if _task_complete(config, task_id, jlens_path):
+        return None
+
+    tmp_dir = _tmp_dir(config)
+    final_root = _run_root(config).resolve()
+    work_root = (tmp_dir / config["run_group_id"]).resolve()
+    if work_root == final_root:
+        raise ValueError("TMP_DIR must resolve to a directory different from output_root/run_group_id.")
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    final_run_dir = _task_run_dir(config, task_id)
+    work_run_dir = work_root / task_id
+    if not work_run_dir.exists() and final_run_dir.exists():
+        shutil.copytree(final_run_dir, work_run_dir, dirs_exist_ok=True)
+    return {**config, "output_root": str(tmp_dir)}
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
+def _merge_move(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if source.is_dir() and not source.is_symlink():
+        if destination.is_symlink() or (destination.exists() and not destination.is_dir()):
+            _remove_path(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        for child in list(source.iterdir()):
+            _merge_move(child, destination / child.name)
+        source.rmdir()
+        return
+    if destination.exists() or destination.is_symlink():
+        _remove_path(destination)
+    shutil.move(str(source), str(destination))
+
+
+def _rewrite_promoted_paths(run_dir: Path, replacements: list[tuple[str, str]]) -> None:
+    text_suffixes = {".json", ".jsonl", ".md"}
+    for path in run_dir.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in text_suffixes:
+            continue
+        text = path.read_text(encoding="utf-8")
+        updated = text
+        for old, new in replacements:
+            updated = updated.replace(old, new)
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+
+
+def _promote_task_results(work_dir: Path, final_dir: Path, work_root: Path, final_root: Path) -> None:
+    work_dir = work_dir.resolve()
+    final_dir = final_dir.resolve()
+    work_root = work_root.resolve()
+    final_root = final_root.resolve()
+    try:
+        work_dir.relative_to(work_root)
+        final_dir.relative_to(final_root)
+    except ValueError as exc:
+        raise RuntimeError("Refusing to promote task results outside their configured roots.") from exc
+    if not work_dir.is_dir():
+        raise FileNotFoundError(f"Temporary task output is missing: {work_dir}")
+    final_dir.mkdir(parents=True, exist_ok=True)
+    for child in list(work_dir.iterdir()):
+        _merge_move(child, final_dir / child.name)
+    work_dir.rmdir()
+    _rewrite_promoted_paths(
+        final_dir,
+        [
+            (str(work_dir), str(final_dir)),
+            (str(work_root), str(final_root)),
+        ],
+    )
 
 
 def _write_run_config(config: dict, task_id: str) -> None:
@@ -435,21 +550,37 @@ def run_cross_task_visualization(config: dict) -> None:
 
 
 def run_pipeline(config: dict) -> None:
+    if _cleanup_collected_states_enabled(config):
+        _tmp_dir(config)
     _run_root(config).mkdir(parents=True, exist_ok=True)
     (_run_root(config) / "pipeline_config.json").write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
     jlens_path = run_jlens_fit(config)
     for task_id in config["task_ids"]:
-        _write_run_config(config, task_id)
-        if _enabled(config, "data"):
-            run_data(config, task_id)
-        if _enabled(config, "lora"):
-            run_lora(config, task_id)
-        if _enabled(config, "prompt_eval"):
-            run_prompt_eval(config, task_id)
-        run_rqs(config, task_id, jlens_path)
-        if _cleanup_collected_states_enabled(config):
-            removed = _cleanup_collected_states(_task_run_dir(config, task_id))
-            print(f"[cleanup] collected states {task_id}: removed {len(removed)} tensor directories", flush=True)
+        task_config = _task_work_config(config, task_id, jlens_path)
+        if task_config is None:
+            print(f"[skip] task {task_id} already complete", flush=True)
+            continue
+        _write_run_config(task_config, task_id)
+        if _enabled(task_config, "data"):
+            run_data(task_config, task_id)
+        if _enabled(task_config, "lora"):
+            run_lora(task_config, task_id)
+        if _enabled(task_config, "prompt_eval"):
+            run_prompt_eval(task_config, task_id)
+        run_rqs(task_config, task_id, jlens_path)
+        if _cleanup_collected_states_enabled(task_config):
+            work_run_dir = _task_run_dir(task_config, task_id)
+            removed = _cleanup_collected_states(work_run_dir)
+            _promote_task_results(
+                work_run_dir,
+                _task_run_dir(config, task_id),
+                _run_root(task_config),
+                _run_root(config),
+            )
+            print(
+                f"[cleanup] collected states {task_id}: removed {len(removed)} tensor directories and promoted task results",
+                flush=True,
+            )
     run_cross_task_visualization(config)
 
 

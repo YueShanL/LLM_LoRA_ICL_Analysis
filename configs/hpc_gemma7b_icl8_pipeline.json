@@ -23,6 +23,7 @@
   "source_id": "wikitext",
   "seed": 13,
   "cleanup_collected_states": false,
+  "TMP_DIR": null,
   "instruction_mode": {
     "mode": "icl",
     "icl_examples": 8,
