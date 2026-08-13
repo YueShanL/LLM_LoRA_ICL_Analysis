@@ -81,6 +81,8 @@ def _done_dataset(run_dir: Path) -> bool:
 
 
 def _done_lora(adapter_dir: Path) -> bool:
+    if (adapter_dir / "training_failed.json").exists():
+        return False
     return (adapter_dir / "adapter_config.json").exists() and (
         (adapter_dir / "adapter_model.safetensors").exists() or (adapter_dir / "adapter_model.bin").exists()
     )
@@ -227,7 +229,11 @@ def _task_work_config(config: dict, task_id: str, jlens_path: Path | None) -> di
     work_run_dir = work_root / task_id
     if not work_run_dir.exists() and final_run_dir.exists():
         shutil.copytree(final_run_dir, work_run_dir, dirs_exist_ok=True)
-    return {**config, "output_root": str(tmp_dir)}
+    return {
+        **config,
+        "output_root": str(tmp_dir),
+        "_final_output_root": str(_run_root(config)),
+    }
 
 
 def _remove_path(path: Path) -> None:
@@ -318,6 +324,8 @@ def _write_run_config(config: dict, task_id: str) -> None:
         "target_modules": list(lora.get("target_modules", ["auto"])),
         "fp16": bool(lora.get("fp16", False)),
         "bf16": bool(lora.get("bf16", False)),
+        "monitor_nonfinite": bool(lora.get("monitor_nonfinite", True)),
+        "max_grad_norm": float(lora.get("max_grad_norm", 1.0)),
         "qlora": bool(lora.get("qlora", False)),
         "device_map": lora.get("device_map", "auto"),
         "include_instruction_in_prompt": bool(data.get("include_instruction_in_prompt", False)),
@@ -367,30 +375,41 @@ def run_lora(config: dict, task_id: str) -> None:
         print(f"[skip] lora {task_id}", flush=True)
         return
     lora = _stage(config, "lora")
-    train_lora(
-        TrainConfig(
-            model_name=config["model_name"],
-            dataset_path=_task_run_dir(config, task_id) / "dataset",
-            output_dir=adapter_dir,
-            max_length=int(lora.get("max_length", 512)),
-            seed=int(config.get("seed", 13)),
-            rank=int(lora.get("rank", 8)),
-            lora_alpha=int(lora.get("lora_alpha", 16)),
-            lora_dropout=float(lora.get("lora_dropout", 0.05)),
-            target_modules=tuple(lora.get("target_modules", ["auto"])),
-            learning_rate=float(lora.get("learning_rate", 2e-4)),
-            epochs=float(lora.get("epochs", 3.0)),
-            train_batch_size=int(lora.get("train_batch_size", 2)),
-            eval_batch_size=int(lora.get("eval_batch_size", 2)),
-            gradient_accumulation_steps=int(lora.get("gradient_accumulation_steps", 8)),
-            fp16=bool(lora.get("fp16", False)),
-            bf16=bool(lora.get("bf16", False)),
-            qlora=bool(lora.get("qlora", False)),
-            device_map=lora.get("device_map", "auto"),
-            prompt_format=lora.get("prompt_format", "raw"),
-            append_eos=bool(lora.get("append_eos", True)),
+    try:
+        train_lora(
+            TrainConfig(
+                model_name=config["model_name"],
+                dataset_path=_task_run_dir(config, task_id) / "dataset",
+                output_dir=adapter_dir,
+                max_length=int(lora.get("max_length", 512)),
+                seed=int(config.get("seed", 13)),
+                rank=int(lora.get("rank", 8)),
+                lora_alpha=int(lora.get("lora_alpha", 16)),
+                lora_dropout=float(lora.get("lora_dropout", 0.05)),
+                target_modules=tuple(lora.get("target_modules", ["auto"])),
+                learning_rate=float(lora.get("learning_rate", 2e-4)),
+                epochs=float(lora.get("epochs", 3.0)),
+                train_batch_size=int(lora.get("train_batch_size", 2)),
+                eval_batch_size=int(lora.get("eval_batch_size", 2)),
+                gradient_accumulation_steps=int(lora.get("gradient_accumulation_steps", 8)),
+                fp16=bool(lora.get("fp16", False)),
+                bf16=bool(lora.get("bf16", False)),
+                monitor_nonfinite=bool(lora.get("monitor_nonfinite", True)),
+                max_grad_norm=float(lora.get("max_grad_norm", 1.0)),
+                qlora=bool(lora.get("qlora", False)),
+                device_map=lora.get("device_map", "auto"),
+                prompt_format=lora.get("prompt_format", "raw"),
+                append_eos=bool(lora.get("append_eos", True)),
+            )
         )
-    )
+    except Exception:
+        failure_report = adapter_dir / "training_failed.json"
+        final_root = config.get("_final_output_root")
+        if failure_report.exists() and final_root:
+            final_adapter = Path(final_root) / task_id / "adapters" / f"r{int(lora.get('rank', 8))}"
+            final_adapter.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(failure_report, final_adapter / failure_report.name)
+        raise
     print(f"[done] lora {task_id}", flush=True)
 
 

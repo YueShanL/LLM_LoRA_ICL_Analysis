@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 import fnmatch
 import inspect
 import json
+import math
+import numbers
 from pathlib import Path
 import shutil
 
@@ -41,6 +43,106 @@ class TrainConfig:
     device_map: str | None = "auto"
     prompt_format: str = "raw"
     append_eos: bool = True
+    monitor_nonfinite: bool = True
+    max_grad_norm: float = 1.0
+
+
+class _NonFiniteTrainingError(FloatingPointError):
+    """Raised when LoRA training produces NaN or Inf values."""
+
+
+def _parameter_nonfinite_issue(model, *, include_gradients: bool = True) -> str | None:
+    """Return the first non-finite trainable parameter or gradient, if any."""
+    import torch
+
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad or not parameter.is_floating_point():
+            continue
+        if include_gradients and parameter.grad is not None and not torch.isfinite(parameter.grad.detach()).all():
+            return f"non-finite gradient in trainable parameter {name}"
+        if not torch.isfinite(parameter.detach()).all():
+            return f"non-finite value in trainable parameter {name}"
+    return None
+
+
+def _log_nonfinite_issue(logs: dict | None) -> str | None:
+    if not logs:
+        return None
+    invalid = []
+    for name, value in logs.items():
+        if isinstance(value, numbers.Real) and not isinstance(value, bool):
+            try:
+                if not math.isfinite(float(value)):
+                    invalid.append(name)
+            except (TypeError, ValueError, OverflowError):
+                invalid.append(name)
+    return f"non-finite training log values: {', '.join(invalid)}" if invalid else None
+
+
+class _NonFiniteTrainingCallbackMixin:
+    """Checks the small trainable LoRA parameter set at Trainer lifecycle hooks."""
+
+    @staticmethod
+    def _raise_if_invalid(model, step: int | None, *, include_gradients: bool = True) -> None:
+        if model is None:
+            return
+        issue = _parameter_nonfinite_issue(model, include_gradients=include_gradients)
+        if issue:
+            raise _NonFiniteTrainingError(f"step={step}: {issue}")
+
+    def on_pre_optimizer_step(self, args, state, control, **kwargs):
+        self._raise_if_invalid(kwargs.get("model"), getattr(state, "global_step", None))
+        return control
+
+    def on_step_end(self, args, state, control, **kwargs):
+        self._raise_if_invalid(kwargs.get("model"), getattr(state, "global_step", None))
+        return control
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        issue = _log_nonfinite_issue(logs)
+        if issue:
+            raise _NonFiniteTrainingError(f"step={getattr(state, 'global_step', None)}: {issue}")
+        return control
+
+
+def _make_nonfinite_callback():
+    from transformers import TrainerCallback
+
+    class NonFiniteTrainingCallback(_NonFiniteTrainingCallbackMixin, TrainerCallback):
+        pass
+
+    return NonFiniteTrainingCallback()
+
+
+def _write_training_failure(config: TrainConfig, error: BaseException) -> Path:
+    """Remove invalid adapter artifacts and persist a failure marker for resume logic."""
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    failure_marker = config.output_dir / "training_failed.json"
+    if failure_marker.exists():
+        failure_marker.unlink()
+    removed = []
+    for name in ("adapter_model.safetensors", "adapter_model.bin", "adapter_config.json"):
+        path = config.output_dir / name
+        if path.exists():
+            path.unlink()
+            removed.append(name)
+    failure_path = config.output_dir / "training_failed.json"
+    failure_path.write_text(
+        json.dumps(
+            {
+                "status": "failed_nonfinite",
+                "error_type": type(error).__name__,
+                "error": str(error),
+                "model_name": config.model_name,
+                "output_dir": str(config.output_dir),
+                "removed_adapter_artifacts": removed,
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return failure_path
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -228,6 +330,7 @@ def train_lora(config: TrainConfig) -> None:
         "eval_steps": config.logging_steps if eval_dataset is not None else None,
         "fp16": config.fp16,
         "bf16": config.bf16,
+        "max_grad_norm": config.max_grad_norm,
         "report_to": [],
         "remove_unused_columns": False,
     }
@@ -249,10 +352,29 @@ def train_lora(config: TrainConfig) -> None:
         "processing_class" if "processing_class" in inspect.signature(Trainer.__init__).parameters else "tokenizer"
     )
     trainer_args[trainer_tokenizer_name] = tokenizer
+    if config.monitor_nonfinite:
+        trainer_args["callbacks"] = [_make_nonfinite_callback()]
     trainer = Trainer(**trainer_args)
-    trainer.train()
-    if eval_dataset is not None:
-        trainer.evaluate()
+    try:
+        train_output = trainer.train()
+        issue = _log_nonfinite_issue(getattr(train_output, "metrics", None))
+        if issue:
+            raise _NonFiniteTrainingError(f"post-training result: {issue}")
+        if eval_dataset is not None:
+            eval_metrics = trainer.evaluate()
+            issue = _log_nonfinite_issue(eval_metrics)
+            if issue:
+                raise _NonFiniteTrainingError(f"post-training evaluation: {issue}")
+        if config.monitor_nonfinite:
+            issue = _parameter_nonfinite_issue(model, include_gradients=True)
+            if issue:
+                raise _NonFiniteTrainingError(f"post-training validation: {issue}")
+    except _NonFiniteTrainingError as exc:
+        failure_path = _write_training_failure(config, exc)
+        raise RuntimeError(
+            f"LoRA training aborted because of non-finite values: {exc}. "
+            f"Invalid adapter artifacts were removed; see {failure_path}."
+        ) from exc
     trainer.save_model(str(config.output_dir))
     tokenizer.save_pretrained(str(config.output_dir))
 
@@ -292,6 +414,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device-map", default="auto")
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
+    parser.add_argument("--max-grad-norm", type=float, default=1.0)
+    parser.add_argument("--no-monitor-nonfinite", action="store_true")
     return parser.parse_args()
 
 
@@ -325,6 +449,8 @@ def main() -> None:
             device_map=args.device_map or None,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
+            monitor_nonfinite=not args.no_monitor_nonfinite,
+            max_grad_norm=args.max_grad_norm,
         )
     )
     print(f"Wrote LoRA adapter to {args.output_dir}")
