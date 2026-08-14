@@ -114,6 +114,15 @@ def _make_nonfinite_callback():
     return NonFiniteTrainingCallback()
 
 
+def _upcast_trainable_parameters(model) -> None:
+    """Keep the small LoRA parameter set in fp32 when the base model uses bf16/fp16."""
+    import torch
+
+    for parameter in model.parameters():
+        if parameter.requires_grad and parameter.is_floating_point() and parameter.dtype != torch.float32:
+            parameter.data = parameter.data.float()
+
+
 def _write_training_failure(config: TrainConfig, error: BaseException) -> Path:
     """Remove invalid adapter artifacts and persist a failure marker for resume logic."""
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -279,6 +288,7 @@ def train_lora(config: TrainConfig) -> None:
             target_modules=list(target_modules),
         ),
     )
+    _upcast_trainable_parameters(model)
     model.print_trainable_parameters()
 
     train_dataset = _load_split(config.dataset_path, config.train_split)
