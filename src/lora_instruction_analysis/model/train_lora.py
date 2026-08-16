@@ -45,6 +45,8 @@ class TrainConfig:
     append_eos: bool = True
     monitor_nonfinite: bool = True
     max_grad_norm: float = 1.0
+    skip_nonfinite_loss: bool = True
+    max_nonfinite_loss_skips: int = 8
 
 
 class _NonFiniteTrainingError(FloatingPointError):
@@ -112,6 +114,56 @@ def _make_nonfinite_callback():
         pass
 
     return NonFiniteTrainingCallback()
+
+
+def _make_finite_trainer(base_trainer, *, skip_nonfinite_loss: bool, max_nonfinite_loss_skips: int):
+    """Check loss immediately and optionally turn bad microbatches into zero-gradient steps."""
+
+    class FiniteTrainer(base_trainer):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._nonfinite_loss_skips = 0
+
+        @staticmethod
+        def _zero_backward_loss(model):
+            zero = None
+            for parameter in model.parameters():
+                if parameter.requires_grad and parameter.is_floating_point():
+                    term = parameter.float().sum() * 0.0
+                    zero = term if zero is None else zero + term
+            if zero is None:
+                raise RuntimeError("Cannot skip a non-finite loss: no floating-point trainable parameters found.")
+            return zero
+
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            try:
+                result = super().compute_loss(model, inputs, return_outputs=return_outputs, **kwargs)
+            except TypeError as exc:
+                if "num_items_in_batch" not in kwargs or "num_items_in_batch" not in str(exc):
+                    raise
+                result = super().compute_loss(model, inputs, return_outputs=return_outputs)
+            loss = result[0] if isinstance(result, tuple) else result
+            import torch
+
+            if not torch.isfinite(loss.detach()).all():
+                step = getattr(self.state, "global_step", None)
+                if not model.training or not skip_nonfinite_loss:
+                    raise _NonFiniteTrainingError(f"step={step}: non-finite loss returned by model.compute_loss")
+                self._nonfinite_loss_skips += 1
+                if self._nonfinite_loss_skips > max_nonfinite_loss_skips:
+                    raise _NonFiniteTrainingError(
+                        f"step={step}: exceeded max_nonfinite_loss_skips={max_nonfinite_loss_skips}"
+                    )
+                print(
+                    f"[warn] skipped non-finite loss before backward: step={step}, "
+                    f"count={self._nonfinite_loss_skips}/{max_nonfinite_loss_skips}",
+                    flush=True,
+                )
+                zero_loss = self._zero_backward_loss(model)
+                return (zero_loss, result[1]) if return_outputs and isinstance(result, tuple) else zero_loss
+            return result
+
+    return FiniteTrainer
 
 
 def _upcast_trainable_parameters(model) -> None:
@@ -253,6 +305,8 @@ def _encode(tokenizer, record: dict, max_length: int, prompt_format: str, append
         append_eos=append_eos,
         max_length=max_length,
     )
+    if not encoded["target_ids"]:
+        raise ValueError(f"Training example {record.get('sample_id', '<unknown>')} has no target tokens after encoding.")
     return {
         "input_ids": encoded["input_ids"],
         "attention_mask": [1] * len(encoded["input_ids"]),
@@ -364,7 +418,16 @@ def train_lora(config: TrainConfig) -> None:
     trainer_args[trainer_tokenizer_name] = tokenizer
     if config.monitor_nonfinite:
         trainer_args["callbacks"] = [_make_nonfinite_callback()]
-    trainer = Trainer(**trainer_args)
+    trainer_class = (
+        _make_finite_trainer(
+            Trainer,
+            skip_nonfinite_loss=config.skip_nonfinite_loss,
+            max_nonfinite_loss_skips=config.max_nonfinite_loss_skips,
+        )
+        if config.monitor_nonfinite
+        else Trainer
+    )
+    trainer = trainer_class(**trainer_args)
     try:
         train_output = trainer.train()
         issue = _log_nonfinite_issue(getattr(train_output, "metrics", None))
@@ -426,6 +489,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-append-eos", action="store_true")
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--no-monitor-nonfinite", action="store_true")
+    parser.add_argument("--no-skip-nonfinite-loss", action="store_true")
+    parser.add_argument("--max-nonfinite-loss-skips", type=int, default=8)
     return parser.parse_args()
 
 
@@ -461,6 +526,8 @@ def main() -> None:
             append_eos=not args.no_append_eos,
             monitor_nonfinite=not args.no_monitor_nonfinite,
             max_grad_norm=args.max_grad_norm,
+            skip_nonfinite_loss=not args.no_skip_nonfinite_loss,
+            max_nonfinite_loss_skips=args.max_nonfinite_loss_skips,
         )
     )
     print(f"Wrote LoRA adapter to {args.output_dir}")

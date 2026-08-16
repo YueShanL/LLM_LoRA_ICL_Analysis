@@ -48,6 +48,8 @@
       "bf16": true,
       "monitor_nonfinite": true,
       "max_grad_norm": 1.0,
+      "skip_nonfinite_loss": true,
+      "max_nonfinite_loss_skips": 8,
       "qlora": false,
       "device_map": "auto",
       "prompt_format": "raw",
