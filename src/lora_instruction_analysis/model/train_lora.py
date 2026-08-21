@@ -47,6 +47,7 @@ class TrainConfig:
     max_grad_norm: float = 1.0
     skip_nonfinite_loss: bool = True
     max_nonfinite_loss_skips: int = 8
+    detect_anomaly: bool = False
 
 
 class _NonFiniteTrainingError(FloatingPointError):
@@ -116,13 +117,27 @@ def _make_nonfinite_callback():
     return NonFiniteTrainingCallback()
 
 
-def _make_finite_trainer(base_trainer, *, skip_nonfinite_loss: bool, max_nonfinite_loss_skips: int):
+def _make_finite_trainer(
+    base_trainer,
+    *,
+    skip_nonfinite_loss: bool,
+    max_nonfinite_loss_skips: int,
+    detect_anomaly: bool,
+):
     """Check loss immediately and optionally turn bad microbatches into zero-gradient steps."""
 
     class FiniteTrainer(base_trainer):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self._nonfinite_loss_skips = 0
+
+        def training_step(self, model, inputs, *args, **kwargs):
+            if not detect_anomaly:
+                return super().training_step(model, inputs, *args, **kwargs)
+            import torch
+
+            with torch.autograd.detect_anomaly(check_nan=True):
+                return super().training_step(model, inputs, *args, **kwargs)
 
         @staticmethod
         def _zero_backward_loss(model):
@@ -423,6 +438,7 @@ def train_lora(config: TrainConfig) -> None:
             Trainer,
             skip_nonfinite_loss=config.skip_nonfinite_loss,
             max_nonfinite_loss_skips=config.max_nonfinite_loss_skips,
+            detect_anomaly=config.detect_anomaly,
         )
         if config.monitor_nonfinite
         else Trainer
@@ -491,6 +507,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-monitor-nonfinite", action="store_true")
     parser.add_argument("--no-skip-nonfinite-loss", action="store_true")
     parser.add_argument("--max-nonfinite-loss-skips", type=int, default=8)
+    parser.add_argument("--detect-anomaly", action="store_true")
     return parser.parse_args()
 
 
@@ -528,6 +545,7 @@ def main() -> None:
             max_grad_norm=args.max_grad_norm,
             skip_nonfinite_loss=not args.no_skip_nonfinite_loss,
             max_nonfinite_loss_skips=args.max_nonfinite_loss_skips,
+            detect_anomaly=args.detect_anomaly,
         )
     )
     print(f"Wrote LoRA adapter to {args.output_dir}")

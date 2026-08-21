@@ -66,6 +66,7 @@
       "max_grad_norm": 0.5,
       "skip_nonfinite_loss": true,
       "max_nonfinite_loss_skips": 8,
+      "detect_anomaly": true,
       "qlora": false,
       "device_map": "auto",
       "prompt_format": "raw",
