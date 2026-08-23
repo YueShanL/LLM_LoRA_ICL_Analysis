@@ -332,6 +332,7 @@ def _write_run_config(config: dict, task_id: str) -> None:
         "detect_anomaly": bool(lora.get("detect_anomaly", False)),
         "qlora": bool(lora.get("qlora", False)),
         "device_map": lora.get("device_map", "auto"),
+        "attn_implementation": lora.get("attn_implementation"),
         "include_instruction_in_prompt": bool(data.get("include_instruction_in_prompt", False)),
         "streaming": bool(data.get("streaming", False)),
         "prompt_format": lora.get("prompt_format", "raw"),
@@ -406,6 +407,7 @@ def run_lora(config: dict, task_id: str) -> None:
                 detect_anomaly=bool(lora.get("detect_anomaly", False)),
                 qlora=bool(lora.get("qlora", False)),
                 device_map=lora.get("device_map", "auto"),
+                attn_implementation=lora.get("attn_implementation"),
                 prompt_format=lora.get("prompt_format", "raw"),
                 append_eos=bool(lora.get("append_eos", True)),
             )

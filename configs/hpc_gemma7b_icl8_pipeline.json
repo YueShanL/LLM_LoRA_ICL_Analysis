@@ -66,9 +66,10 @@
       "max_grad_norm": 0.5,
       "skip_nonfinite_loss": true,
       "max_nonfinite_loss_skips": 8,
-      "detect_anomaly": true,
+      "detect_anomaly": false,
       "qlora": false,
       "device_map": "auto",
+      "attn_implementation": "eager",
       "prompt_format": "raw",
       "append_eos": true
     },

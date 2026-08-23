@@ -41,6 +41,7 @@ class TrainConfig:
     bf16: bool = False
     qlora: bool = False
     device_map: str | None = "auto"
+    attn_implementation: str | None = None
     prompt_format: str = "raw"
     append_eos: bool = True
     monitor_nonfinite: bool = True
@@ -289,6 +290,8 @@ def _load_model_and_tokenizer(config: TrainConfig):
     kwargs = {"torch_dtype": _torch_dtype(torch, config.fp16, config.bf16)}
     if config.device_map:
         kwargs["device_map"] = config.device_map
+    if config.attn_implementation:
+        kwargs["attn_implementation"] = config.attn_implementation
     if config.qlora:
         try:
             from transformers import BitsAndBytesConfig
@@ -501,6 +504,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bf16", action="store_true")
     parser.add_argument("--qlora", action="store_true")
     parser.add_argument("--device-map", default="auto")
+    parser.add_argument("--attn-implementation", choices=("eager", "sdpa", "flash_attention_2"))
     parser.add_argument("--prompt-format", choices=PROMPT_FORMATS, default="raw")
     parser.add_argument("--no-append-eos", action="store_true")
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
@@ -539,6 +543,7 @@ def main() -> None:
             bf16=args.bf16,
             qlora=args.qlora,
             device_map=args.device_map or None,
+            attn_implementation=args.attn_implementation,
             prompt_format=args.prompt_format,
             append_eos=not args.no_append_eos,
             monitor_nonfinite=not args.no_monitor_nonfinite,
