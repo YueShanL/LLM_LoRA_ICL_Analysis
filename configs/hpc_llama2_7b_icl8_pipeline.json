@@ -22,8 +22,8 @@
   ],
   "source_id": "wikitext",
   "seed": 13,
-  "cleanup_collected_states": false,
-  "TMP_DIR": null,
+  "cleanup_collected_states": true,
+  "TMP_DIR": "/tmp",
   "instruction_mode": {
     "mode": "icl",
     "icl_examples": 8,
