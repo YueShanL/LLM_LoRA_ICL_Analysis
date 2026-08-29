@@ -148,8 +148,24 @@ def _done_cross_task(output_dir: Path) -> bool:
     return (combined / "rq1_similarity_lines.png").exists() and (combined / "rq3_accuracy_all_tasks.csv").exists()
 
 
+_CLEANUP_RETENTION_VERSION = 2
+
+
+def _done_compacted_task(run_dir: Path) -> bool:
+    report = run_dir / "collected_states_cleanup.json"
+    if not report.exists():
+        return False
+    try:
+        payload = _read_config(report)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+    return payload.get("status") == "complete" and payload.get("retention_version") == _CLEANUP_RETENTION_VERSION
+
+
 def _task_complete(config: dict, task_id: str, jlens_path: Path | None) -> bool:
     run_dir = _task_run_dir(config, task_id)
+    if _cleanup_collected_states_enabled(config) and _done_compacted_task(run_dir):
+        return True
     icl_examples, icl_split = _instruction_mode(config)
     if _enabled(config, "data") and not _done_dataset(run_dir):
         return False
@@ -175,34 +191,56 @@ def _task_complete(config: dict, task_id: str, jlens_path: Path | None) -> bool:
 
 
 def _cleanup_collected_states(run_dir: Path) -> list[Path]:
-    """Remove raw collection tensors after all task-level analyses have succeeded."""
-    states_root = (run_dir / "states").resolve()
-    if not states_root.is_dir():
-        return []
-
+    """Retain only prompt evaluation and the files needed for task/cross-task plots."""
+    run_dir = run_dir.resolve()
+    if not run_dir.is_dir():
+        raise FileNotFoundError(f"Task output directory is missing: {run_dir}")
     removed: list[Path] = []
-    for state_dir in sorted(states_root.iterdir()):
-        tensor_dir = state_dir / "tensors"
-        if not tensor_dir.is_dir() or tensor_dir.is_symlink():
+    retained_names = {"config.json", "plots", "prompt_eval", "patches", "collected_states_cleanup.json"}
+    for child in list(run_dir.iterdir()):
+        if child.name in retained_names:
             continue
-        if tensor_dir.resolve().parent != states_root / state_dir.name:
-            raise RuntimeError(f"Refusing to clean tensor directory outside states root: {tensor_dir}")
-        shutil.rmtree(tensor_dir)
-        removed.append(tensor_dir)
+        _remove_path(child)
+        removed.append(child)
+
+    patches_root = run_dir / "patches"
+    if patches_root.is_dir() and not patches_root.is_symlink():
+        for child in list(patches_root.iterdir()):
+            if child.name != "rq3":
+                _remove_path(child)
+                removed.append(child)
+        rq3_root = patches_root / "rq3"
+        if rq3_root.is_dir() and not rq3_root.is_symlink():
+            for patch_run in list(rq3_root.iterdir()):
+                if not patch_run.is_dir() or patch_run.is_symlink():
+                    _remove_path(patch_run)
+                    removed.append(patch_run)
+                    continue
+                for artifact in list(patch_run.iterdir()):
+                    if artifact.name in {"metrics.jsonl", "config.json"} and artifact.is_file():
+                        continue
+                    _remove_path(artifact)
+                    removed.append(artifact)
+                if not any(patch_run.iterdir()):
+                    patch_run.rmdir()
+            if not any(rq3_root.iterdir()):
+                rq3_root.rmdir()
+        if not any(patches_root.iterdir()):
+            patches_root.rmdir()
 
     report = run_dir / "collected_states_cleanup.json"
     report.write_text(
         json.dumps(
             {
                 "status": "complete",
+                "retention_version": _CLEANUP_RETENTION_VERSION,
                 "removed": [str(path) for path in removed],
                 "retained": [
-                    "states/*/metrics.jsonl",
-                    "states/*/config.json",
-                    "states/*/dataset_snapshot.jsonl",
+                    "config.json",
                     "plots/**",
+                    "prompt_eval/**",
                     "patches/rq3/**/metrics.jsonl",
-                    "patches/rq3/**/generations.jsonl",
+                    "patches/rq3/**/config.json",
                 ],
             },
             indent=2,
@@ -216,7 +254,12 @@ def _cleanup_collected_states(run_dir: Path) -> list[Path]:
 def _task_work_config(config: dict, task_id: str, jlens_path: Path | None) -> dict | None:
     if not _cleanup_collected_states_enabled(config):
         return config
+    final_run_dir = _task_run_dir(config, task_id)
+    if _done_compacted_task(final_run_dir):
+        return None
     if _task_complete(config, task_id, jlens_path):
+        removed = _cleanup_collected_states(final_run_dir)
+        print(f"[cleanup] compacted existing task {task_id}: removed {len(removed)} artifacts", flush=True)
         return None
 
     tmp_dir = _tmp_dir(config)
@@ -225,7 +268,6 @@ def _task_work_config(config: dict, task_id: str, jlens_path: Path | None) -> di
     if work_root == final_root:
         raise ValueError("TMP_DIR must resolve to a directory different from output_root/run_group_id.")
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    final_run_dir = _task_run_dir(config, task_id)
     work_run_dir = work_root / task_id
     if not work_run_dir.exists() and final_run_dir.exists():
         shutil.copytree(final_run_dir, work_run_dir, dirs_exist_ok=True)
@@ -271,7 +313,14 @@ def _rewrite_promoted_paths(run_dir: Path, replacements: list[tuple[str, str]]) 
             path.write_text(updated, encoding="utf-8")
 
 
-def _promote_task_results(work_dir: Path, final_dir: Path, work_root: Path, final_root: Path) -> None:
+def _promote_task_results(
+    work_dir: Path,
+    final_dir: Path,
+    work_root: Path,
+    final_root: Path,
+    *,
+    replace_existing: bool = False,
+) -> None:
     work_dir = work_dir.resolve()
     final_dir = final_dir.resolve()
     work_root = work_root.resolve()
@@ -283,6 +332,8 @@ def _promote_task_results(work_dir: Path, final_dir: Path, work_root: Path, fina
         raise RuntimeError("Refusing to promote task results outside their configured roots.") from exc
     if not work_dir.is_dir():
         raise FileNotFoundError(f"Temporary task output is missing: {work_dir}")
+    if replace_existing and final_dir.exists():
+        _remove_path(final_dir)
     final_dir.mkdir(parents=True, exist_ok=True)
     for child in list(work_dir.iterdir()):
         _merge_move(child, final_dir / child.name)
@@ -605,9 +656,10 @@ def run_pipeline(config: dict) -> None:
                 _task_run_dir(config, task_id),
                 _run_root(task_config),
                 _run_root(config),
+                replace_existing=True,
             )
             print(
-                f"[cleanup] collected states {task_id}: removed {len(removed)} tensor directories and promoted task results",
+                f"[cleanup] compacted {task_id}: removed {len(removed)} artifacts and promoted retained results",
                 flush=True,
             )
     run_cross_task_visualization(config)
