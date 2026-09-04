@@ -1,5 +1,6 @@
 from pathlib import Path
 import csv
+import gzip
 import json
 import sys
 import tempfile
@@ -7,7 +8,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.plot_combined_rq1_rq2 import collect, write_plots
+from scripts.plot_combined_rq1_rq2 import collect, layer_means, task_dirs, write_plots
 from scripts.plot_all_rq3_accuracy import collect as collect_rq3
 from scripts.plot_task_acceptance import collect as collect_acceptance, write_plots as write_acceptance_plots
 
@@ -29,7 +30,63 @@ def _write_token_similarity(path: Path) -> None:
         )
 
 
+def _write_aggregated_similarity(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["sample_id", "task_id", "condition", "mode", "layer", "head", "cosine_similarity_n", "cosine_similarity_mean"],
+        )
+        writer.writeheader()
+        writer.writerows(
+            (
+                {
+                    "sample_id": "sample_a",
+                    "task_id": "task_a",
+                    "condition": "instruction_only_vs_lora_only",
+                    "mode": "residual",
+                    "layer": "0",
+                    "head": "",
+                    "cosine_similarity_n": "2",
+                    "cosine_similarity_mean": "0.6",
+                },
+                {
+                    "sample_id": "sample_b",
+                    "task_id": "task_a",
+                    "condition": "instruction_only_vs_lora_only",
+                    "mode": "residual",
+                    "layer": "0",
+                    "head": "",
+                    "cosine_similarity_n": "1",
+                    "cosine_similarity_mean": "0.9",
+                },
+            )
+        )
+
+
 class CombinedPlotTests(unittest.TestCase):
+    def test_task_dirs_excludes_aggregation_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "task_a" / "plots").mkdir(parents=True)
+            (root / "analysis_aggregates" / "task_a" / "plots").mkdir(parents=True)
+
+            self.assertEqual(task_dirs(root), [root / "task_a"])
+
+    def test_collects_aggregated_rows_and_preserves_token_weighted_layer_mean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "task_a" / "plots").mkdir(parents=True)
+            _write_aggregated_similarity(
+                root / "analysis_aggregates" / "task_a" / "plots" / "rq1" / "token_similarity.sample_layer_head.csv.gz"
+            )
+
+            _rates, datasets = collect(root, root / "acceptance")
+
+            rows = datasets["rq1_similarity"]["task_a"]
+            self.assertEqual(len(rows), 2)
+            self.assertAlmostEqual(layer_means(rows, "cosine_similarity")[0], 0.7)
+
     def test_collects_and_plots_post_o_proj_attention_outputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

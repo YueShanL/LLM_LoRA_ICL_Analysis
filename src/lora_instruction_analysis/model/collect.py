@@ -73,7 +73,14 @@ def _torch_dtype(torch, dtype: str):
         raise ValueError(f"Unknown torch dtype {dtype!r}, e.g. float32, float16, bfloat16.") from exc
 
 
-def _load_model(config: CollectConfig, *, use_lora: bool):
+def _load_model(
+    config: CollectConfig,
+    *,
+    use_lora: bool,
+    output_hidden_states: bool = True,
+    output_attentions: bool = True,
+    attn_implementation: str | None = "eager",
+):
     try:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -89,10 +96,11 @@ def _load_model(config: CollectConfig, *, use_lora: bool):
 
     kwargs = {
         "torch_dtype": _torch_dtype(torch, config.dtype),
-        "output_hidden_states": True,
-        "output_attentions": True,
-        "attn_implementation": "eager",
+        "output_hidden_states": output_hidden_states,
+        "output_attentions": output_attentions,
     }
+    if attn_implementation is not None:
+        kwargs["attn_implementation"] = attn_implementation
     if config.device == "auto":
         kwargs["device_map"] = "auto"
     model = AutoModelForCausalLM.from_pretrained(config.model_name, **kwargs)

@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gzip
 import json
 import math
 from collections import defaultdict
 from pathlib import Path
-from statistics import fmean
 
 import matplotlib.pyplot as plt
 
@@ -18,12 +18,15 @@ CONDITION = "instruction_only_vs_lora_only"
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
+    if path.suffix == ".gz":
+        with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
+            return list(csv.DictReader(handle))
     with path.open("r", encoding="utf-8", newline="") as handle:
         return list(csv.DictReader(handle))
 
 
 def task_dirs(root: Path) -> list[Path]:
-    return sorted(path for path in root.iterdir() if path.is_dir())
+    return sorted(path for path in root.iterdir() if path.is_dir() and (path / "plots").is_dir())
 
 
 def instruction_pass_rate(acceptance_root: Path, task: str) -> float:
@@ -39,9 +42,14 @@ def instruction_pass_rate(acceptance_root: Path, task: str) -> float:
     return math.nan
 
 
-def rows_for(task_dir: Path, candidates: tuple[Path, ...]) -> list[dict[str, str]]:
-    for rel in candidates:
-        path = task_dir / rel
+def _aggregate_path(aggregate_task_dir: Path, relative_path: Path) -> Path:
+    return aggregate_task_dir / relative_path.with_suffix(".sample_layer_head.csv.gz")
+
+
+def rows_for(task_dir: Path, aggregate_task_dir: Path, candidates: tuple[Path, ...]) -> list[dict[str, str]]:
+    paths = [*(task_dir / relative_path for relative_path in candidates)]
+    paths.extend(_aggregate_path(aggregate_task_dir, relative_path) for relative_path in candidates)
+    for path in paths:
         if path.exists():
             rows = [row for row in read_csv(path) if row.get("condition") == CONDITION]
             if rows:
@@ -49,13 +57,28 @@ def rows_for(task_dir: Path, candidates: tuple[Path, ...]) -> list[dict[str, str
     return []
 
 
+def _metric_value(row: dict[str, str], metric: str) -> tuple[float, float] | None:
+    raw_value = row.get(metric)
+    if raw_value not in (None, ""):
+        return float(raw_value), 1.0
+    mean_value = row.get(f"{metric}_mean")
+    if mean_value in (None, ""):
+        return None
+    count = row.get(f"{metric}_n") or row.get("source_target_token_count") or "1"
+    return float(mean_value), float(count)
+
+
 def layer_means(rows: list[dict[str, str]], metric: str) -> dict[int, float]:
     grouped: dict[int, list[float]] = defaultdict(list)
     for row in rows:
-        value = row.get(metric)
-        if value not in (None, ""):
-            grouped[int(row["layer"])].append(float(value))
-    return {layer: fmean(values) for layer, values in sorted(grouped.items()) if values}
+        value = _metric_value(row, metric)
+        if value is not None:
+            grouped[int(row["layer"])].append(value)
+    return {
+        layer: sum(value * weight for value, weight in values) / sum(weight for _, weight in values)
+        for layer, values in sorted(grouped.items())
+        if values
+    }
 
 
 def collect(root: Path, acceptance_root: Path) -> tuple[dict[str, float], dict[str, dict[str, list[dict[str, str]]]]]:
@@ -63,12 +86,16 @@ def collect(root: Path, acceptance_root: Path) -> tuple[dict[str, float], dict[s
     rates: dict[str, float] = {}
     for task_dir in task_dirs(root):
         task = task_dir.name
+        aggregate_task_dir = root / "analysis_aggregates" / task
         rates[task] = instruction_pass_rate(acceptance_root, task)
-        datasets["rq1_similarity"][task] = rows_for(task_dir, (Path("plots/rq1/token_similarity.csv"),))
+        datasets["rq1_similarity"][task] = rows_for(
+            task_dir, aggregate_task_dir, (Path("plots/rq1/token_similarity.csv"),)
+        )
         datasets["rq1_cka"][task] = datasets["rq1_similarity"][task]
         datasets["rq1_delta_subspace"][task] = read_csv(task_dir / "plots/rq1/delta_subspace_summary.csv") if (task_dir / "plots/rq1/delta_subspace_summary.csv").exists() else []
         datasets["rq2_attention_prob"][task] = rows_for(
             task_dir,
+            aggregate_task_dir,
             (
                 Path("plots/rq2/token_similarity.csv"),
                 Path("plots/rq21/attention_probs/token_similarity.csv"),
@@ -76,10 +103,12 @@ def collect(root: Path, acceptance_root: Path) -> tuple[dict[str, float], dict[s
         )
         datasets["rq2_attention_output"][task] = rows_for(
             task_dir,
+            aggregate_task_dir,
             (Path("plots/rq21/attention_outputs/token_similarity.csv"),),
         )
         datasets["rq2_attention_post_o_proj_output"][task] = rows_for(
             task_dir,
+            aggregate_task_dir,
             (Path("plots/rq21/attention_post_o_proj_outputs/token_similarity.csv"),),
         )
     return rates, datasets
@@ -118,11 +147,11 @@ def plot_scatter(
     for task, rows in sorted(rows_by_task.items()):
         rate = rates.get(task, math.nan)
         for row in rows:
-            value = row.get("cosine_similarity")
-            if value in (None, ""):
+            metric = _metric_value(row, "cosine_similarity")
+            if metric is None:
                 continue
             xs.append(int(row["layer"]))
-            ys.append(float(value))
+            ys.append(metric[0])
             colors.append(rate)
     fig, ax = plt.subplots(figsize=(12, 7))
     scatter = ax.scatter(xs, ys, c=colors, cmap="viridis", s=9, alpha=0.35, edgecolors="none")

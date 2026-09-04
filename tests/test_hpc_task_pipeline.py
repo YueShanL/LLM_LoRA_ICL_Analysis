@@ -1,6 +1,15 @@
 from pathlib import Path
+from unittest.mock import patch
 
-from scripts.hpc_task_pipeline import _cleanup_collected_states, _done_compacted_task, _promote_task_results
+from scripts.hpc_task_pipeline import (
+    _cleanup_collected_states,
+    _done_compacted_task,
+    _done_rq1,
+    _done_rq2,
+    _done_rq21,
+    _promote_task_results,
+    run_task_analysis_aggregation,
+)
 
 
 def test_cleanup_collected_states_keeps_only_plot_prompt_eval_and_rq3_plot_data(tmp_path: Path):
@@ -74,3 +83,44 @@ def test_promote_task_results_can_replace_stale_final_task(tmp_path: Path):
 
     assert (final_dir / "config.json").exists()
     assert not (final_dir / "stale_adapter.bin").exists()
+
+
+def test_task_aggregation_uses_final_output_and_does_not_require_tmp_dir(tmp_path: Path):
+    final_root = tmp_path / "experiments" / "run"
+    task_root = final_root / "task_a"
+    task_root.mkdir(parents=True)
+    config = {
+        "output_root": str(tmp_path / "experiments"),
+        "run_group_id": "run",
+        "cleanup_collected_states": True,
+        "aggregate_analysis_outputs": True,
+    }
+    with patch("scripts.hpc_task_pipeline.aggregation_is_current", return_value=False) as current, patch(
+        "scripts.hpc_task_pipeline.aggregate_experiment", return_value={"processed": [], "source_bytes": 0, "aggregate_bytes": 0}
+    ) as aggregate, patch("scripts.hpc_task_pipeline.prune_aggregated_source_tables", return_value=[]) as prune:
+        run_task_analysis_aggregation(config, "task_a")
+
+    current.assert_called_once_with(task_root, final_root / "analysis_aggregates" / "task_a")
+    aggregate.assert_called_once_with(task_root, final_root / "analysis_aggregates" / "task_a")
+    prune.assert_called_once_with(task_root, final_root / "analysis_aggregates" / "task_a")
+
+
+def test_rq_completion_accepts_pruned_token_tables_when_aggregation_is_enabled(tmp_path: Path):
+    run_dir = tmp_path / "run" / "task_a"
+    aggregate_dir = run_dir.parent / "analysis_aggregates" / run_dir.name
+    for stage in ("rq1", "rq2", "rq21"):
+        (run_dir / "states" / stage).mkdir(parents=True, exist_ok=True)
+        (run_dir / "states" / stage / "metrics.jsonl").write_text("{}\n", encoding="utf-8")
+        (run_dir / f"{stage}_config.json").write_text("{}", encoding="utf-8")
+    for relative in (
+        "plots/rq1/token_similarity.sample_layer_head.csv.gz",
+        "plots/rq21/attention_probs/token_similarity.sample_layer_head.csv.gz",
+        "plots/rq21/attention_outputs/token_similarity.sample_layer_head.csv.gz",
+    ):
+        path = aggregate_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"aggregate")
+
+    assert _done_rq1(run_dir, allow_aggregated=True)
+    assert _done_rq2(run_dir, allow_aggregated=True)
+    assert _done_rq21(run_dir, allow_aggregated=True)

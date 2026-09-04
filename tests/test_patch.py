@@ -5,6 +5,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch as mock_patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -24,6 +25,103 @@ class CharTokenizer:
 
 
 class PatchTests(unittest.TestCase):
+    def test_rq3_loader_disables_collection_outputs(self):
+        config = patch.PatchConfig(
+            model_name="model",
+            dataset_path=Path("dataset"),
+            output_dir=Path("out"),
+        )
+        sentinel = object()
+
+        with mock_patch.object(patch, "_load_model", return_value=sentinel) as load_model:
+            self.assertIs(patch._load_condition(config, "lora_only"), sentinel)
+
+        load_model.assert_called_once()
+        self.assertTrue(load_model.call_args.kwargs["use_lora"])
+        self.assertFalse(load_model.call_args.kwargs["output_hidden_states"])
+        self.assertFalse(load_model.call_args.kwargs["output_attentions"])
+        self.assertIsNone(load_model.call_args.kwargs["attn_implementation"])
+
+    def test_rq3_forwards_disable_collection_outputs(self):
+        try:
+            torch = importlib.import_module("torch")
+        except ImportError:
+            self.skipTest("torch is not installed")
+
+        class RecordingModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.anchor = torch.nn.Parameter(torch.zeros(1))
+                self.calls = []
+
+            def forward(self, input_ids, labels=None, **kwargs):
+                self.calls.append(kwargs)
+                logits = torch.zeros((1, input_ids.shape[1], 256), device=input_ids.device)
+                logits[..., ord("a")] = 1.0
+                return SimpleNamespace(logits=logits, loss=torch.tensor(0.0, device=input_ids.device))
+
+        record = {
+            "sample_id": "s1",
+            "task_id": "first_word",
+            "input_text": "ab",
+            "instruction_text": "Return the first word.",
+            "target_text": "ab",
+        }
+        model = RecordingModel()
+        tokenizer = CharTokenizer()
+
+        patch._run_target(
+            torch,
+            tokenizer,
+            model,
+            record,
+            "lora_only",
+            0,
+            "text",
+            "raw",
+            True,
+            None,
+            None,
+        )
+        patch._generate_target(
+            torch,
+            tokenizer,
+            model,
+            record,
+            "lora_only",
+            0,
+            1,
+            "text",
+            "raw",
+            True,
+            None,
+            None,
+        )
+
+        self.assertEqual(len(model.calls), 2)
+        for call in model.calls:
+            self.assertFalse(call["use_cache"])
+            self.assertFalse(call["output_hidden_states"])
+            self.assertFalse(call["output_attentions"])
+
+    def test_rq3_result_coverage_rejects_missing_control_rows(self):
+        records = [{"sample_id": "s1"}, {"sample_id": "s2"}]
+        controls = [("base_to_target_patch", "base"), ("source_to_target_patch", "instruction_only")]
+        complete_rows = [
+            {"sample_id": sample_id, "control": control}
+            for sample_id in ("s1", "s2")
+            for control in ("unpatched", "base_to_target_patch", "source_to_target_patch")
+        ]
+
+        patch._validate_result_coverage(records, controls, complete_rows, result_name="generations")
+        with self.assertRaisesRegex(RuntimeError, "missing=.*s2.*source_to_target_patch"):
+            patch._validate_result_coverage(
+                records,
+                controls,
+                complete_rows[:-1],
+                result_name="generations",
+            )
+
     def test_block_uses_configured_path(self):
         torch = importlib.import_module("torch")
         nn = torch.nn

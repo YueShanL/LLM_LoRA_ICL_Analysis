@@ -10,6 +10,7 @@
   "source_id": "wikitext",
   "seed": 13,
   "cleanup_collected_states": false,
+  "aggregate_analysis_outputs": false,
   "TMP_DIR": null,
   "instruction_mode": {
     "mode": "prompt",

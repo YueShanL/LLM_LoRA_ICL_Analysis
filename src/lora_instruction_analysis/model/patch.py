@@ -84,7 +84,14 @@ def _model_config(config: PatchConfig) -> CollectConfig:
 
 def _load_condition(config: PatchConfig, condition: str):
     os.environ.setdefault("HF_DEACTIVATE_ASYNC_LOAD", "1")
-    return _load_model(_model_config(config), use_lora=condition == "lora_only")
+    # RQ3 captures one block through hooks, so retaining whole-model diagnostics is unnecessary.
+    return _load_model(
+        _model_config(config),
+        use_lora=condition == "lora_only",
+        output_hidden_states=False,
+        output_attentions=False,
+        attn_implementation=None,
+    )
 
 
 def _control_sources(config: PatchConfig) -> list[tuple[str, str]]:
@@ -257,7 +264,12 @@ def _capture_activation(
     handle = _block(model, layer, block_path).register_forward_hook(save)
     try:
         with torch.no_grad():
-            model(input_ids=input_ids, use_cache=False)
+            model(
+                input_ids=input_ids,
+                use_cache=False,
+                output_hidden_states=False,
+                output_attentions=False,
+            )
     finally:
         handle.remove()
     return captured["activation"], encoded
@@ -307,7 +319,13 @@ def _run_target(
         handle = _block(model, layer, block_path).register_forward_hook(apply_patch)
     try:
         with torch.no_grad():
-            outputs = model(input_ids=input_ids, labels=labels, use_cache=False)
+            outputs = model(
+                input_ids=input_ids,
+                labels=labels,
+                use_cache=False,
+                output_hidden_states=False,
+                output_attentions=False,
+            )
     finally:
         if handle is not None:
             handle.remove()
@@ -398,7 +416,13 @@ def _generate_target(
     try:
         with torch.no_grad():
             for token_index in range(max_new_tokens):
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    use_cache=False,
+                    output_hidden_states=False,
+                    output_attentions=False,
+                )
                 logits = outputs.logits[:, -1, :]
                 target_id = _target_loss_ids(target_ids, token_index)
                 if target_id is not None:
@@ -480,6 +504,40 @@ def _capture_patches_for_condition(torch, tokenizer, model, records: list[dict],
     return patches
 
 
+def _validate_result_coverage(
+    records: list[dict],
+    controls: list[tuple[str, str]],
+    rows: list[dict],
+    *,
+    result_name: str,
+) -> None:
+    sample_ids = [record["sample_id"] for record in records]
+    if len(sample_ids) != len(set(sample_ids)):
+        raise RuntimeError("RQ3 input records contain duplicate sample_id values.")
+    expected_controls = ["unpatched", *[control_name for control_name, _condition in controls]]
+    expected = {(sample_id, control) for sample_id in sample_ids for control in expected_controls}
+
+    seen = []
+    for row in rows:
+        try:
+            seen.append((row["sample_id"], row["control"]))
+        except KeyError as exc:
+            raise RuntimeError(f"RQ3 {result_name} row is missing {exc.args[0]!r}.") from exc
+    actual = set(seen)
+    duplicate = sorted(key for key, count in Counter(seen).items() if count > 1)
+    missing = sorted(expected - actual)
+    unexpected = sorted(actual - expected)
+    if duplicate or missing or unexpected:
+        details = []
+        if duplicate:
+            details.append(f"duplicate={duplicate}")
+        if missing:
+            details.append(f"missing={missing}")
+        if unexpected:
+            details.append(f"unexpected={unexpected}")
+        raise RuntimeError(f"RQ3 {result_name} coverage validation failed: {'; '.join(details)}")
+
+
 def _confusion_matrix(rows: list[dict], metric: str) -> list[dict]:
     by_sample: dict[str, dict[str, bool]] = {}
     for row in rows:
@@ -533,8 +591,9 @@ def run_activation_patching(config: PatchConfig) -> None:
     )
     _write_jsonl(config.output_dir / "dataset_snapshot.jsonl", records)
 
+    controls = _control_sources(config)
     patches_by_control = {}
-    for control_name, source_condition in _control_sources(config):
+    for control_name, source_condition in controls:
         torch, source_tokenizer, source_model = _load_condition(config, source_condition)
         try:
             patches_by_control[control_name] = _capture_patches_for_condition(
@@ -592,7 +651,7 @@ def run_activation_patching(config: PatchConfig) -> None:
                     "generation_task_semantic_correct": base_gen["task_semantic_correct"],
                 }
             )
-            for control_name, source_condition in _control_sources(config):
+            for control_name, source_condition in controls:
                 patch, source_encoded = patches_by_control[control_name][record_index]
                 row = _run_target(
                     torch,
@@ -648,6 +707,9 @@ def run_activation_patching(config: PatchConfig) -> None:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+    _validate_result_coverage(records, controls, rows, result_name="teacher-forced metrics")
+    _validate_result_coverage(records, controls, generation_rows, result_name="generations")
+    _validate_result_coverage(records, controls, outcome_rows, result_name="outcomes")
     _write_jsonl(config.output_dir / "metrics.jsonl", rows)
     _write_jsonl(config.output_dir / "generations.jsonl", generation_rows)
     _write_jsonl(config.output_dir / "outcomes.jsonl", outcome_rows)

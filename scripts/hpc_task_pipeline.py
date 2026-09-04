@@ -24,6 +24,7 @@ from lora_instruction_analysis.experiment import run_rq1, run_rq2, run_rq3
 from lora_instruction_analysis.model.jlens_fit import fit_jlens
 from lora_instruction_analysis.model.prompt_eval import PromptEvalConfig, evaluate_prompt
 from lora_instruction_analysis.model.train_lora import TrainConfig, train_lora
+from scripts.aggregate_analysis_outputs import aggregate_experiment, aggregation_is_current, prune_aggregated_source_tables
 from scripts.plot_all_rq3_accuracy import write as write_rq3_plots
 from scripts.plot_combined_rq1_rq2 import write_plots as write_rq12_plots
 
@@ -42,6 +43,10 @@ def _enabled(config: dict, name: str) -> bool:
 
 def _cleanup_collected_states_enabled(config: dict) -> bool:
     return bool(config.get("cleanup_collected_states", False))
+
+
+def _aggregate_analysis_outputs_enabled(config: dict) -> bool:
+    return bool(config.get("aggregate_analysis_outputs", False))
 
 
 def _tmp_dir(config: dict) -> Path:
@@ -75,6 +80,14 @@ def _adapter_dir(config: dict, task_id: str) -> Path:
     return _task_run_dir(config, task_id) / "adapters" / f"r{int(lora.get('rank', 8))}"
 
 
+def _aggregated_token_table_exists(run_dir: Path, *relative_paths: Path) -> bool:
+    aggregate_root = run_dir.parent / "analysis_aggregates" / run_dir.name
+    return any(
+        (aggregate_root / relative_path.with_suffix(".sample_layer_head.csv.gz")).is_file()
+        for relative_path in relative_paths
+    )
+
+
 def _done_dataset(run_dir: Path) -> bool:
     dataset = run_dir / "dataset"
     return all((dataset / name).exists() for name in ("manifest.json", "train.jsonl", "validation.jsonl", "test.jsonl"))
@@ -103,27 +116,63 @@ def _done_jlens(path: Path) -> bool:
     return (path / "validation_summary.json").exists() and (path / "lens").exists()
 
 
-def _done_rq1(run_dir: Path, *, needs_jlens: bool = False, icl_examples: int = 0, icl_split: str = "train") -> bool:
-    done = (run_dir / "states" / "rq1" / "metrics.jsonl").exists() and (run_dir / "plots" / "rq1" / "token_similarity.csv").exists()
+def _done_rq1(
+    run_dir: Path,
+    *,
+    needs_jlens: bool = False,
+    icl_examples: int = 0,
+    icl_split: str = "train",
+    allow_aggregated: bool = False,
+) -> bool:
+    token_table_done = (run_dir / "plots" / "rq1" / "token_similarity.csv").exists() or (
+        allow_aggregated and _aggregated_token_table_exists(run_dir, Path("plots/rq1/token_similarity.csv"))
+    )
+    done = (run_dir / "states" / "rq1" / "metrics.jsonl").exists() and token_table_done
     if needs_jlens:
         done = done and (run_dir / "plots" / "rq1_jlens" / "jlens_readouts.csv").exists()
     return done and (run_dir / "rq1_config.json").exists() and _icl_matches(_read_config(run_dir / "rq1_config.json"), icl_examples, icl_split)
 
 
-def _done_rq2(run_dir: Path, *, icl_examples: int = 0, icl_split: str = "train") -> bool:
+def _done_rq2(
+    run_dir: Path,
+    *,
+    icl_examples: int = 0,
+    icl_split: str = "train",
+    allow_aggregated: bool = False,
+) -> bool:
+    token_table_done = (run_dir / "plots" / "rq2" / "token_similarity.csv").exists() or (
+        allow_aggregated
+        and _aggregated_token_table_exists(
+            run_dir,
+            Path("plots/rq2/token_similarity.csv"),
+            Path("plots/rq21/attention_probs/token_similarity.csv"),
+        )
+    )
     return (
         (run_dir / "states" / "rq2" / "metrics.jsonl").exists()
-        and (run_dir / "plots" / "rq2" / "token_similarity.csv").exists()
+        and token_table_done
         and (run_dir / "rq2_config.json").exists()
         and _icl_matches(_read_config(run_dir / "rq2_config.json"), icl_examples, icl_split)
     )
 
 
-def _done_rq21(run_dir: Path, *, icl_examples: int = 0, icl_split: str = "train") -> bool:
+def _done_rq21(
+    run_dir: Path,
+    *,
+    icl_examples: int = 0,
+    icl_split: str = "train",
+    allow_aggregated: bool = False,
+) -> bool:
+    attention_probs_done = (run_dir / "plots" / "rq21" / "attention_probs" / "token_similarity.csv").exists() or (
+        allow_aggregated and _aggregated_token_table_exists(run_dir, Path("plots/rq21/attention_probs/token_similarity.csv"))
+    )
+    attention_outputs_done = (run_dir / "plots" / "rq21" / "attention_outputs" / "token_similarity.csv").exists() or (
+        allow_aggregated and _aggregated_token_table_exists(run_dir, Path("plots/rq21/attention_outputs/token_similarity.csv"))
+    )
     return (
         (run_dir / "states" / "rq21" / "metrics.jsonl").exists()
-        and (run_dir / "plots" / "rq21" / "attention_probs" / "token_similarity.csv").exists()
-        and (run_dir / "plots" / "rq21" / "attention_outputs" / "token_similarity.csv").exists()
+        and attention_probs_done
+        and attention_outputs_done
         and (run_dir / "rq21_config.json").exists()
         and _icl_matches(_read_config(run_dir / "rq21_config.json"), icl_examples, icl_split)
     )
@@ -167,6 +216,7 @@ def _task_complete(config: dict, task_id: str, jlens_path: Path | None) -> bool:
     if _cleanup_collected_states_enabled(config) and _done_compacted_task(run_dir):
         return True
     icl_examples, icl_split = _instruction_mode(config)
+    allow_aggregated = _aggregate_analysis_outputs_enabled(config)
     if _enabled(config, "data") and not _done_dataset(run_dir):
         return False
     if _enabled(config, "lora") and not _done_lora(_adapter_dir(config, task_id)):
@@ -177,11 +227,27 @@ def _task_complete(config: dict, task_id: str, jlens_path: Path | None) -> bool:
                 return False
     if _enabled(config, "rq1"):
         needs_jlens = bool(_stage(config, "rq1").get("run_jlens_readout", False) and jlens_path)
-        if not _done_rq1(run_dir, needs_jlens=needs_jlens, icl_examples=icl_examples, icl_split=icl_split):
+        if not _done_rq1(
+            run_dir,
+            needs_jlens=needs_jlens,
+            icl_examples=icl_examples,
+            icl_split=icl_split,
+            allow_aggregated=allow_aggregated,
+        ):
             return False
-    if _enabled(config, "rq2") and not _done_rq2(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+    if _enabled(config, "rq2") and not _done_rq2(
+        run_dir,
+        icl_examples=icl_examples,
+        icl_split=icl_split,
+        allow_aggregated=allow_aggregated,
+    ):
         return False
-    if _enabled(config, "rq21") and not _done_rq21(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+    if _enabled(config, "rq21") and not _done_rq21(
+        run_dir,
+        icl_examples=icl_examples,
+        icl_split=icl_split,
+        allow_aggregated=allow_aggregated,
+    ):
         return False
     if _enabled(config, "rq3") and not _done_rq3(
         run_dir, icl_examples=icl_examples, icl_split=icl_split, layers=_stage(config, "rq3").get("layers")
@@ -577,6 +643,7 @@ def _rq_args(config: dict, task_id: str, rq_name: str) -> SimpleNamespace:
 def run_rqs(config: dict, task_id: str, jlens_path: Path | None) -> None:
     run_dir = _task_run_dir(config, task_id)
     icl_examples, icl_split = _instruction_mode(config)
+    allow_aggregated = _aggregate_analysis_outputs_enabled(config)
     if _enabled(config, "rq1"):
         needs_jlens = bool(_stage(config, "rq1").get("run_jlens_readout", False) and jlens_path)
         if _done_rq1(
@@ -584,6 +651,7 @@ def run_rqs(config: dict, task_id: str, jlens_path: Path | None) -> None:
             needs_jlens=needs_jlens,
             icl_examples=icl_examples,
             icl_split=icl_split,
+            allow_aggregated=allow_aggregated,
         ):
             print(f"[skip] rq1 {task_id}", flush=True)
         else:
@@ -594,13 +662,13 @@ def run_rqs(config: dict, task_id: str, jlens_path: Path | None) -> None:
             run_rq1.run_rq1(run_rq1._infer_config(args))
             print(f"[done] rq1 {task_id}", flush=True)
     if _enabled(config, "rq2"):
-        if _done_rq2(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+        if _done_rq2(run_dir, icl_examples=icl_examples, icl_split=icl_split, allow_aggregated=allow_aggregated):
             print(f"[skip] rq2 {task_id}", flush=True)
         else:
             run_rq2.run_rq2(run_rq2._infer_config(_rq_args(config, task_id, "rq2")))
             print(f"[done] rq2 {task_id}", flush=True)
     if _enabled(config, "rq21"):
-        if _done_rq21(run_dir, icl_examples=icl_examples, icl_split=icl_split):
+        if _done_rq21(run_dir, icl_examples=icl_examples, icl_split=icl_split, allow_aggregated=allow_aggregated):
             print(f"[skip] rq21 {task_id}", flush=True)
         else:
             rq21_config = run_rq2._infer_config(_rq_args(config, task_id, "rq21"), rq_name="rq21")
@@ -629,6 +697,28 @@ def run_cross_task_visualization(config: dict) -> None:
     print(f"[done] cross_task_visualization {output_dir}", flush=True)
 
 
+def run_task_analysis_aggregation(config: dict, task_id: str) -> None:
+    """Aggregate one task only after its retained final outputs are available."""
+    if not _aggregate_analysis_outputs_enabled(config):
+        return
+    task_root = _task_run_dir(config, task_id)
+    output_root = _run_root(config) / "analysis_aggregates" / task_id
+    if aggregation_is_current(task_root, output_root):
+        print(f"[skip] aggregate_analysis_outputs {task_id}", flush=True)
+    else:
+        manifest = aggregate_experiment(task_root, output_root)
+        print(
+            f"[done] aggregate_analysis_outputs {task_id}: "
+            f"{len(manifest['processed'])} tables, "
+            f"{manifest['source_bytes'] / 1_000_000_000:.3f} GB -> "
+            f"{manifest['aggregate_bytes'] / 1_000_000_000:.3f} GB",
+            flush=True,
+        )
+    removed = prune_aggregated_source_tables(task_root, output_root)
+    if removed:
+        print(f"[cleanup] aggregate_analysis_outputs {task_id}: removed {len(removed)} token-level tables", flush=True)
+
+
 def run_pipeline(config: dict) -> None:
     if _cleanup_collected_states_enabled(config):
         _tmp_dir(config)
@@ -639,6 +729,7 @@ def run_pipeline(config: dict) -> None:
         task_config = _task_work_config(config, task_id, jlens_path)
         if task_config is None:
             print(f"[skip] task {task_id} already complete", flush=True)
+            run_task_analysis_aggregation(config, task_id)
             continue
         _write_run_config(task_config, task_id)
         if _enabled(task_config, "data"):
@@ -662,6 +753,7 @@ def run_pipeline(config: dict) -> None:
                 f"[cleanup] compacted {task_id}: removed {len(removed)} artifacts and promoted retained results",
                 flush=True,
             )
+        run_task_analysis_aggregation(config, task_id)
     run_cross_task_visualization(config)
 
 
