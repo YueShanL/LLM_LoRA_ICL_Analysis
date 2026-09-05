@@ -1,0 +1,167 @@
+{
+  "run_group_id": "hpc_llama31_8b_icl8_20260905",
+  "output_root": "experiments",
+  "model_name": "meta-llama/Llama-3.1-8B",
+  "task_ids": [
+    "reverse_words",
+    "first_word",
+    "last_word",
+    "word_count",
+    "uppercase_last_word",
+    "at_operator_mod_minus_left",
+    "first_letter",
+    "last_letter",
+    "char_count_no_space",
+    "words_starting_with_letter",
+    "sum_two_numbers",
+    "exact_three_word_prefix",
+    "extract_items_from_set",
+    "has_repeated_word",
+    "words_containing_bigram_qu",
+    "formal_language_a_n_b_n"
+  ],
+  "source_id": "wikitext",
+  "seed": 13,
+  "cleanup_collected_states": true,
+  "aggregate_analysis_outputs": false,
+  "TMP_DIR": "/tmp",
+  "instruction_mode": {
+    "mode": "icl",
+    "icl_examples": 8,
+    "icl_split": "train"
+  },
+  "stages": {
+    "data": {
+      "enabled": true,
+      "train_size": 800,
+      "validation_size": 100,
+      "test_size": 100,
+      "max_source_rows": 5000,
+      "min_words": 4,
+      "max_words": 32,
+      "include_instruction_in_prompt": false,
+      "streaming": false,
+      "write_csv": true,
+      "write_hf_dataset": true
+    },
+    "lora": {
+      "enabled": true,
+      "rank": 8,
+      "epochs": 3.0,
+      "learning_rate": 0.0002,
+      "train_batch_size": 2,
+      "eval_batch_size": 2,
+      "gradient_accumulation_steps": 8,
+      "max_length": 4096,
+      "lora_alpha": 16,
+      "lora_dropout": 0.05,
+      "target_modules": [
+        "model.layers.*.self_attn.q_proj",
+        "model.layers.*.self_attn.k_proj",
+        "model.layers.*.self_attn.v_proj"
+      ],
+      "fp16": false,
+      "bf16": true,
+      "monitor_nonfinite": true,
+      "max_grad_norm": 1.0,
+      "skip_nonfinite_loss": true,
+      "max_nonfinite_loss_skips": 8,
+      "qlora": false,
+      "device_map": "auto",
+      "prompt_format": "raw",
+      "append_eos": true
+    },
+    "prompt_eval": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "max_length": 4096,
+      "generation_extra_tokens": 128,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "prompt_format": "raw",
+      "append_eos": true,
+      "runs": [
+        {
+          "name": "instruction_only",
+          "include_instruction": true,
+          "adapter": false
+        },
+        {
+          "name": "no_instruction",
+          "include_instruction": false,
+          "adapter": false
+        },
+        {
+          "name": "lora_with_instruction",
+          "include_instruction": true,
+          "adapter": true
+        }
+      ]
+    },
+    "jlens_fit": {
+      "enabled": true,
+      "output_dir": "experiments/jlens_hpc_llama31_8b_icl8_20260905",
+      "dataset_name": "Salesforce/wikitext",
+      "dataset_config": "wikitext-2-raw-v1",
+      "dataset_split": "train",
+      "validation_split": null,
+      "text_column": "text",
+      "num_sequences": 100,
+      "validation_sequences": 50,
+      "sequence_length": 128,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "dim_batch": 4,
+      "skip_first": 16,
+      "checkpoint_every": 1
+    },
+    "rq1": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "run_jlens_readout": true,
+      "jlens_top_k": 20
+    },
+    "rq2": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda"
+    },
+    "rq21": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda"
+    },
+    "rq3": {
+      "enabled": true,
+      "split": "test",
+      "max_samples": null,
+      "dtype": "bfloat16",
+      "device": "cuda",
+      "source_condition": null,
+      "target_condition": null,
+      "layer": null,
+      "layers": [
+        2,
+        18,
+        30
+      ],
+      "max_new_tokens": null,
+      "patch_span": "text",
+      "block_path": "model.layers",
+      "validator": null
+    },
+    "cross_task_visualization": {
+      "enabled": true,
+      "output_dir": null,
+      "acceptance_root": null
+    }
+  }
+}
