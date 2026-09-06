@@ -23,7 +23,7 @@
   "source_id": "wikitext",
   "seed": 13,
   "cleanup_collected_states": true,
-  "aggregate_analysis_outputs": false,
+  "aggregate_analysis_outputs": true,
   "TMP_DIR": "/tmp",
   "instruction_mode": {
     "mode": "icl",
